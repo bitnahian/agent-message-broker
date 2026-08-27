@@ -125,9 +125,9 @@ export class GoogleSource extends Poller {
     const svc = this.serviceName();
     const results: PollResult[] = [];
     for (const item of items) {
-      const id = String(item[idField] ?? "");
+      const id = String(dig(item, idField) ?? "");
       if (!id) continue;
-      const fingerprint = fingerprintField ? String(item[fingerprintField] ?? "") : "";
+      const fingerprint = fingerprintField ? String(dig(item, fingerprintField) ?? "") : "";
       const key = fingerprint ? `gws:${svc}:${id}@${fingerprint}` : `gws:${svc}:${id}`;
       results.push({
         kind: `gws:${svc}:${fingerprintField ? "changed" : "new"}`,
@@ -137,4 +137,14 @@ export class GoogleSource extends Poller {
     }
     return results;
   }
+}
+
+/** Resolve a possibly-dotted path (`a.b.c`) against an object. */
+function dig(obj: unknown, path: string): unknown {
+  let cur: unknown = obj as Record<string, unknown> & { [k: string]: unknown };
+  for (const seg of path.split(".")) {
+    if (cur == null || typeof cur !== "object") return undefined;
+    cur = (cur as Record<string, unknown>)[seg];
+  }
+  return cur;
 }

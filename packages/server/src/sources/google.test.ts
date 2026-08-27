@@ -79,4 +79,12 @@ describe("GoogleSource (SDK poller)", () => {
     expect(await src.tick()).toBe(0);
     expect(store.listEvents()).toHaveLength(0);
   });
+
+  it("resolves dotted idField (pubsub message.messageId)", async () => {
+    const { store, src } = setup(fakeRunner({ receivedMessages: [{ message: { messageId: "m1", data: "x" } }] }), { api: "pubsub.projects.subscriptions.pull", itemsPath: "receivedMessages", idField: "message.messageId" });
+    expect(await src.tick()).toBe(1);
+    expect(store.listEvents()[0]?.kind).toBe("gws:pubsub:new");
+    expect((store.listEvents()[0]?.payload as { id: string }).id).toBe("m1");
+    expect(await src.tick()).toBe(0); // same messageId deduped
+  });
 });

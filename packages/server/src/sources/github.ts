@@ -88,6 +88,23 @@ export class GitHubSource extends Poller {
     return this.api;
   }
 
+  /** Register a repository webhook via octokit (ADR-0007). Returns the hook id. */
+  async registerWebhook(owner: string, repo: string, url: string, events: string[], secret: string): Promise<number> {
+    const { data } = await this.api.rest.repos.createWebhook!({
+      owner, repo,
+      name: "web",
+      config: { url, content_type: "json", secret },
+      events,
+    });
+    return data.id;
+  }
+
+  /** Delete a registered repo webhook by id. */
+  async deleteWebhook(owner: string, repo: string, hookId: number): Promise<boolean> {
+    const res = await this.api.rest.repos.deleteWebhook!({ owner, repo, hook_id: hookId });
+    return res.status >= 200 && res.status < 300;
+  }
+
   protected async poll(): Promise<PollResult[]> {
     let events: GhEvent[];
     try {

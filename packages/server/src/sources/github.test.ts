@@ -127,3 +127,53 @@ describe("GitHubSource (SDK poller)", () => {
     expect(store.listEvents()[0]?.kind).toBe("github:error");
   });
 });
+
+describe("GitHubSource webhook registration", () => {
+  it("registerWebhook via octokit createWebhook returns hook id", async () => {
+    const created: unknown[] = [];
+    const api: OctokitLike = {
+      rest: {
+        repos: {
+          listEvents: async () => ({ data: [] }),
+          createWebhook: async (p) => { created.push(p); return { data: { id: 99 } }; },
+          deleteWebhook: async () => ({ status: 204 }),
+        },
+      },
+    };
+    const { src } = setup(api, { repo: "o/r" });
+    const id = await src.registerWebhook("o", "r", "https://smee.io/x", ["push", "pull_request"], "sec");
+    expect(id).toBe(99);
+    expect(created[0]).toMatchObject({
+      owner: "o", repo: "r", name: "web", events: ["push", "pull_request"],
+      config: { url: "https://smee.io/x", content_type: "json", secret: "sec" },
+    });
+  });
+
+  it("deleteWebhook via octokit returns success", async () => {
+    const api: OctokitLike = {
+      rest: {
+        repos: {
+          listEvents: async () => ({ data: [] }),
+          createWebhook: async () => ({ data: { id: 1 } }),
+          deleteWebhook: async () => ({ status: 204 }),
+        },
+      },
+    };
+    const { src } = setup(api);
+    expect(await src.deleteWebhook("o", "r", 7)).toBe(true);
+  });
+
+  it("deleteWebhook returns false on non-2xx", async () => {
+    const api: OctokitLike = {
+      rest: {
+        repos: {
+          listEvents: async () => ({ data: [] }),
+          createWebhook: async () => ({ data: { id: 1 } }),
+          deleteWebhook: async () => ({ status: 404 }),
+        },
+      },
+    };
+    const { src } = setup(api);
+    expect(await src.deleteWebhook("o", "r", 7)).toBe(false);
+  });
+});

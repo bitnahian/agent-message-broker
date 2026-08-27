@@ -29,8 +29,10 @@ export interface GhEvent {
  */
 export interface OctokitLike {
   rest: {
+    activity: {
+      listRepoEvents: (p: { owner: string; repo: string; per_page?: number }) => Promise<{ data: GhEvent[] }>;
+    };
     repos: {
-      listEvents: (p: { owner: string; repo: string; per_page: number }) => Promise<{ data: GhEvent[] }>;
       listHooks?: (p: { owner: string; repo: string }) => Promise<{ data: { id: number }[] }>;
       createWebhook?: (p: { owner: string; repo: string; name: string; config: Record<string, unknown>; events: string[] }) => Promise<{ data: { id: number } }>;
       deleteWebhook?: (p: { owner: string; repo: string; hook_id: number }) => Promise<{ status: number }>;
@@ -138,7 +140,7 @@ export class GitHubSource extends Poller {
     }
     const [owner, name] = repo.split("/");
     const perPage = this.opts.perPage ?? 30;
-    const { data } = await this.api.rest.repos.listEvents({ owner, repo: name, per_page: perPage });
+    const { data } = await this.api.rest.activity.listRepoEvents({ owner, repo: name, per_page: perPage });
     return data;
   }
 }

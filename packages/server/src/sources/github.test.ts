@@ -13,14 +13,15 @@ const fixture: GhEvent[] = [
 function fakeOctokit(events: GhEvent[] | (() => GhEvent[]), opts: { fail?: boolean; calls?: string[] } = {}): OctokitLike {
   return {
     rest: {
-      repos: {
-        listEvents: async ({ owner, repo, per_page }) => {
-          opts.calls?.push(`listEvents:${owner}/${repo}:${per_page}`);
+      activity: {
+        listRepoEvents: async ({ owner, repo, per_page }) => {
+          opts.calls?.push(`listRepoEvents:${owner}/${repo}:${per_page}`);
           if (opts.fail) throw new Error("boom");
           const e = typeof events === "function" ? events() : events;
           return { data: e };
         },
       },
+      repos: {},
     },
   };
 }
@@ -86,7 +87,7 @@ describe("GitHubSource (SDK poller)", () => {
     const calls: string[] = [];
     const { src } = setup(fakeOctokit([], { calls }), { repo: "cli/cli", perPage: 7 });
     await src.tick();
-    expect(calls[0]).toBe("listEvents:cli/cli:7");
+    expect(calls[0]).toBe("listRepoEvents:cli/cli:7");
   });
 
   it("summarizes every GitHub event type and edge shapes", async () => {
@@ -133,8 +134,8 @@ describe("GitHubSource webhook registration", () => {
     const created: unknown[] = [];
     const api: OctokitLike = {
       rest: {
+        activity: { listRepoEvents: async () => ({ data: [] }) },
         repos: {
-          listEvents: async () => ({ data: [] }),
           createWebhook: async (p) => { created.push(p); return { data: { id: 99 } }; },
           deleteWebhook: async () => ({ status: 204 }),
         },
@@ -152,8 +153,8 @@ describe("GitHubSource webhook registration", () => {
   it("deleteWebhook via octokit returns success", async () => {
     const api: OctokitLike = {
       rest: {
+        activity: { listRepoEvents: async () => ({ data: [] }) },
         repos: {
-          listEvents: async () => ({ data: [] }),
           createWebhook: async () => ({ data: { id: 1 } }),
           deleteWebhook: async () => ({ status: 204 }),
         },
@@ -166,8 +167,8 @@ describe("GitHubSource webhook registration", () => {
   it("deleteWebhook returns false on non-2xx", async () => {
     const api: OctokitLike = {
       rest: {
+        activity: { listRepoEvents: async () => ({ data: [] }) },
         repos: {
-          listEvents: async () => ({ data: [] }),
           createWebhook: async () => ({ data: { id: 1 } }),
           deleteWebhook: async () => ({ status: 404 }),
         },

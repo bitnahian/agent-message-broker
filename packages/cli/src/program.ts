@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { scaffoldCredentials } from "./credentials.js";
 import type { BrokerClient } from "./client.js";
 
 const print = (v: unknown) => console.log(JSON.stringify(v, null, 2));
@@ -6,6 +7,14 @@ const print = (v: unknown) => console.log(JSON.stringify(v, null, 2));
 export function createProgram(client: BrokerClient): Command {
   const program = new Command();
   program.name("amb").description("agent-message-broker CLI").exitOverride();
+
+  const config = program.command("config").description("manage local credentials");
+  config.command("init")
+    .option("--kind <kind>", "scaffold a specific credential kind (github|jira|google)")
+    .action((o: { kind?: string }) => {
+      const kinds = o.kind ? [o.kind] : undefined;
+      print({ written: scaffoldCredentials({ kinds }) });
+    });
 
   const topics = program.command("topics").description("manage topics");
   topics.command("list").action(async () => print(await client.get("/topics")));

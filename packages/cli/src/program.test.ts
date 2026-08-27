@@ -1,4 +1,7 @@
 import type { FastifyInstance } from "fastify";
+import { existsSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildApp } from "@amb/server";
 import { createDb } from "@amb/server/db";
@@ -88,5 +91,20 @@ describe("amb CLI (against live server)", () => {
     expect(nested.event.kind).toBe("polled-url");
     const events = JSON.parse(await runCli("events", "list", "--topic", topic.id));
     expect(events).toHaveLength(2);
+  });
+
+  it("config init scaffolds credential templates to AMB_HOME", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "amb-cli-prog-"));
+    const prev = process.env.AMB_HOME;
+    process.env.AMB_HOME = tmp;
+    try {
+      const out = JSON.parse(await runCli("config", "init", "--kind", "github"));
+      expect(out.written).toHaveLength(1);
+      expect(existsSync(join(tmp, "github", "credentials.json"))).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+      if (prev !== undefined) process.env.AMB_HOME = prev;
+      else delete process.env.AMB_HOME;
+    }
   });
 });

@@ -1,15 +1,13 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { Octokit } from "octokit";
 import { Poller, type PollResult } from "./poller.js";
 import type { SourceContext } from "./registry.js";
-
-const execFileAsync = promisify(execFile);
+import { loadCredentials } from "./credentials.js";
 
 export interface GitHubSourceOptions {
-  /** e.g. "owner/repo" → polls repos/{owner}/{repo}/events */
+  /** e.g. "owner/repo" → queries repos/{owner}/{repo}/events */
   repo?: string;
-  /** raw gh api path override, e.g. "notifications" or "users/<u>/events" */
-  path?: string;
+  /** feed event-type allowlist (ADR-0005); empty = all supported types */
+  eventTypes?: string[];
   intervalMs?: number;
   /** max events per poll; default 30 */
   perPage?: number;
@@ -18,19 +16,34 @@ export interface GitHubSourceOptions {
 export interface GhEvent {
   id: string;
   type: string;
-  actor?: { login?: string };
-  repo?: { name?: string };
+  actor?: { login?: string } | null;
+  repo?: { name?: string } | null;
   created_at?: string;
   payload?: Record<string, unknown>;
 }
 
-export type GhRunner = (path: string) => Promise<string>;
+/**
+ * Minimal octokit surface the GitHub feed depends on, so tests can inject a
+ * fake client (no network). We only read repository events and, for webhook
+ * registration (ADR-0007), manage hooks.
+ */
+export interface OctokitLike {
+  rest: {
+    repos: {
+      listEvents: (p: { owner: string; repo: string; per_page: number }) => Promise<{ data: GhEvent[] }>;
+      listHooks?: (p: { owner: string; repo: string }) => Promise<{ data: { id: number }[] }>;
+      createWebhook?: (p: { owner: string; repo: string; name: string; config: Record<string, unknown>; events: string[] }) => Promise<{ data: { id: number } }>;
+      deleteWebhook?: (p: { owner: string; repo: string; hook_id: number }) => Promise<{ status: number }>;
+    };
+  };
+}
 
-/** Default runner shells out to `gh api` (uses the user's existing gh auth). */
-export const ghRunner: GhRunner = async (path) => {
-  const { stdout } = await execFileAsync("gh", ["api", path], { maxBuffer: 16 * 1024 * 1024 });
-  return stdout;
-};
+/** Build an authenticated octokit client from ~/.amb/github/credentials.json. */
+export function buildOctokit(base?: string): OctokitLike {
+  const { token } = loadCredentials("github", base) as { token: string };
+  const octokit = new Octokit({ auth: token });
+  return octokit as unknown as OctokitLike;
+}
 
 function summarize(ev: GhEvent): string {
   const actor = ev.actor?.login ?? "?";
@@ -54,48 +67,63 @@ function summarize(ev: GhEvent): string {
 }
 
 /**
- * GitHub events via `gh api` polling. Webhooks are intentionally not used:
- * the broker is local-only and can't receive pushes without a tunnel.
- * Dedupe via GitHub's stable event ids.
+ * GitHub SDK poller over octokit (ADR-0006), replacing `gh api` CLI exec.
+ * Polls repository events, filters by the feed event-type allowlist, dedupes
+ * on GitHub's stable event id, and emits `github:<Type>` events (same kinds as
+ * the previous CLI poller / as the webhook tier).
  */
 export class GitHubSource extends Poller {
   private opts: GitHubSourceOptions;
-  private runner: GhRunner;
+  private api: OctokitLike;
 
-  constructor(ctx: SourceContext, runner: GhRunner = ghRunner) {
+  constructor(ctx: SourceContext, api?: OctokitLike) {
     const opts = ctx.config.options as unknown as GitHubSourceOptions;
     super(ctx, { intervalMs: opts.intervalMs ?? 60_000 });
     this.opts = opts;
-    this.runner = runner;
+    this.api = api ?? buildOctokit();
   }
 
-  private apiPath(): string {
-    if (this.opts.path) return this.opts.path;
-    if (this.opts.repo) return `repos/${this.opts.repo}/events`;
-    throw new Error("github source requires options.repo or options.path");
+  /** The concrete octokit client (exposed for webhook registration). */
+  get octokit(): OctokitLike {
+    return this.api;
   }
 
   protected async poll(): Promise<PollResult[]> {
     let events: GhEvent[];
     try {
-      const raw = await this.runner(this.apiPath());
-      events = JSON.parse(raw) as GhEvent[];
+      events = await this.fetchEvents();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return [{ kind: "github:error", key: `error:${msg.slice(0, 80)}`, payload: { error: msg } }];
     }
     const perPage = this.opts.perPage ?? 30;
-    return events.slice(0, perPage).map((ev) => ({
-      kind: `github:${ev.type}`,
-      key: `gh:${ev.id}`,
-      payload: {
-        id: ev.id,
-        type: ev.type,
-        repo: ev.repo?.name,
-        actor: ev.actor?.login,
-        createdAt: ev.created_at,
-        summary: summarize(ev),
-      },
-    }));
+    const allow = this.opts.eventTypes;
+    return events.slice(0, perPage)
+      .filter((ev) => !allow || allow.includes(ev.type))
+      .map((ev) => ({
+        kind: `github:${ev.type}`,
+        key: `gh:${ev.id}`,
+        payload: {
+          id: ev.id,
+          type: ev.type,
+          repo: ev.repo?.name,
+          actor: ev.actor?.login,
+          createdAt: ev.created_at,
+          summary: summarize(ev),
+        },
+      }));
+  }
+
+  private async fetchEvents(): Promise<GhEvent[]> {
+    const repo = this.opts.repo;
+    if (!repo || !repo.includes("/")) {
+      throw new Error("github feed requires options.repo (owner/repo)");
+    }
+    const [owner, name] = repo.split("/");
+    const perPage = this.opts.perPage ?? 30;
+    const { data } = await this.api.rest.repos.listEvents({ owner, repo: name, per_page: perPage });
+    return data;
   }
 }
+
+export { summarize as githubSummarize };

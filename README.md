@@ -40,6 +40,7 @@ npx nx run @amb/ui:build  # build the UI (served by the server)
 
 npm run start             # → http://127.0.0.1:4733  (UI + API)
 npx tsx scripts/e2e.mts   # full e2e: server + CLI + UI + retention
+npx tsx scripts/e2e-feeds.mts   # live Feed e2e: real github+jira SDK polls -> topic -> delivery (needs creds; seeds+cleans throwaway repo/ticket)
 ```
 
 CLI (same server, `BROKER_URL`/`BROKER_TOKEN` envs respected):

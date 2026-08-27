@@ -18,9 +18,10 @@ const TEMPLATES: Record<string, Record<string, string>> = {
     domain: "<your-site>.atlassian.net",
   },
   google: {
-    clientEmail: "<service-account@project.iam.gserviceaccount.com>",
-    privateKey: "-----BEGIN PRIVATE KEY-----\n<...>\n-----END PRIVATE KEY-----",
-    projectId: "<gcp-project-id>",
+    type: "service_account",
+    client_email: "<service-account@project.iam.gserviceaccount.com>",
+    private_key: "-----BEGIN PRIVATE KEY-----\n<...>\n-----END PRIVATE KEY-----",
+    project_id: "<gcp-project-id>",
   },
 };
 

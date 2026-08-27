@@ -81,11 +81,25 @@ describe("credentials loader", () => {
     expect([c.email, c.apiToken, c.domain]).toEqual(["a@b.c", "tok", "x.atlassian.net"]);
   });
 
-  it("loads google creds", () => {
-    write("google", { clientEmail: "sa@prj.iam.gserviceaccount.com", privateKey: "-----BEGIN-----", projectId: "prj" }, 0o600);
-    const c = loadCredentials("google", base) as { clientEmail: string; projectId: string };
-    expect(c.clientEmail).toContain("@");
-    expect(c.projectId).toBe("prj");
+  it("loads google SA creds (standard gcloud snake_case shape)", () => {
+    write("google", { type: "service_account", client_email: "sa@prj.iam.gserviceaccount.com", private_key: "-----BEGIN-----", project_id: "prj" }, 0o600);
+    const c = loadCredentials("google", base) as { client_email: string; project_id: string };
+    expect(c.client_email).toContain("@");
+    expect(c.project_id).toBe("prj");
+  });
+
+  it("loads google SA creds without type (falls back to SA fields)", () => {
+    write("google", { client_email: "sa@prj", private_key: "pk", project_id: "prj" }, 0o600);
+    const c = loadCredentials("google", base) as { project_id: string };
+    expect(c.project_id).toBe("prj");
+  });
+
+  it("loads google OAuth authorized_user creds", () => {
+    write("google", { type: "authorized_user", client_id: "c.apps.googleusercontent.com", client_secret: "GOCSPX-x", refresh_token: "1//abc" }, 0o600);
+    const c = loadCredentials("google", base) as { type: string; client_id: string; refresh_token: string };
+    expect(c.type).toBe("authorized_user");
+    expect(c.client_id).toContain("apps.googleusercontent.com");
+    expect(c.refresh_token).toBe("1//abc");
   });
 
   it("kind mismatch: requesting google throws missing when creds live in github dir", () => {
@@ -101,6 +115,6 @@ describe("credentials loader", () => {
   it("schema lists required fields", () => {
     expect(credentialSchema("github")).toEqual(["token"]);
     expect(credentialSchema("jira")).toEqual(["email", "apiToken", "domain"]);
-    expect(credentialSchema("google")).toEqual(["clientEmail", "privateKey", "projectId"]);
+    expect(credentialSchema("google")).toEqual(["client_email", "private_key", "project_id"]);
   });
 });

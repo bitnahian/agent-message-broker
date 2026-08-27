@@ -1,0 +1,26 @@
+{
+  "name": "agent-message-broker",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "nx run-many -t test --all --skip-nx-cache",
+    "build": "nx run-many -t build --all --skip-nx-cache",
+    "verify": "nx run-many -t build,test --all --skip-nx-cache",
+    "start": "tsx packages/server/src/index.ts",
+    "e2e": "tsx scripts/e2e.mts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@vitest/coverage-v8": "^3.2.7",
+    "nx": "^21.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.1.0"
+  },
+  "allowScripts": {
+    "better-sqlite3@11.10.0": true,
+    "esbuild@0.28.2": true
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@amb/cli",
+  "version": "0.0.1",
+  "type": "module",
+  "bin": {
+    "amb": "src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@amb/core": "*",
+    "commander": "^13.1.0"
+  },
+  "devDependencies": {
+    "@amb/server": "*",
+    "@vitest/coverage-v8": "^3.2.7"
+  }
+}

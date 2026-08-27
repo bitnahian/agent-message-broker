@@ -31,10 +31,10 @@ function setup(runner?: GoogleApiRunner, options: Record<string, unknown> = { ap
 
 describe("splitApi", () => {
   it("splits service.resource.method", () => {
-    expect(splitApi("drive.files.list")).toEqual(["drive", "files", "list"]);
+    expect(splitApi("drive.files.list")).toEqual({ service: "drive", resourcePath: ["files"], method: "list" });
   });
-  it("splits with dotted method tails", () => {
-    expect(splitApi("sheets.spreadsheets.values.get")).toEqual(["sheets", "spreadsheets", "values.get"]);
+  it("handles deeply nested pubsub path", () => {
+    expect(splitApi("pubsub.projects.subscriptions.pull")).toEqual({ service: "pubsub", resourcePath: ["projects", "subscriptions"], method: "pull" });
   });
   it("throws on malformed target", () => {
     expect(() => splitApi("drive.files")).toThrow();

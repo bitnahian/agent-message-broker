@@ -24,11 +24,11 @@ export interface GoogleSourceOptions {
  */
 export type GoogleApiRunner = (api: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
-/** Split an `api` spec ("service.resource.method") into parts. */
-export function splitApi(api: string): [string, string, string] {
+/** Split an `api` spec into [service, resourcePath, method]. */
+export function splitApi(api: string): { service: string; resourcePath: string[]; method: string } {
   const parts = api.split(".");
   if (parts.length < 3 || parts.some((p) => !p)) throw new Error(`invalid google api target: ${api}`);
-  return [parts[0], parts[1], parts.slice(2).join(".")];
+  return { service: parts[0], resourcePath: parts.slice(1, -1), method: parts[parts.length - 1] };
 }
 
 const VERSIONS: Record<string, string> = { drive: "v3", sheets: "v4", gmail: "v1", calendar: "v3", pubsub: "v1" };
@@ -68,17 +68,21 @@ export async function buildGoogleApi(base?: string): Promise<GoogleApiRunner> {
 
   const methodCache = new Map<string, (p: Record<string, unknown>) => Promise<{ data: Record<string, unknown> }>>();
   return async (api, params) => {
-    let method = methodCache.get(api);
-    if (!method) {
-      const [service, resource, methodName] = splitApi(api);
-      const client = getClient(service) as Record<string, unknown>;
-      const resourceApi = client[resource] as Record<string, (p: unknown) => Promise<{ data: Record<string, unknown> }>> | undefined;
-      const fn = resourceApi?.[methodName];
-      if (typeof fn !== "function") throw new Error(`no method ${service}.${resource}.${methodName}`);
-      method = fn.bind(resourceApi);
-      methodCache.set(api, method);
+    let call = methodCache.get(api);
+    if (!call) {
+      const parsed = splitApi(api);
+      let node: Record<string, unknown> = getClient(parsed.service) as Record<string, unknown>;
+      for (const seg of parsed.resourcePath) {
+        const next = node[seg] as Record<string, unknown> | undefined;
+        if (!next) throw new Error(`no resource ${parsed.service}.${parsed.resourcePath.join(".")}`);
+        node = next;
+      }
+      const fn = node[parsed.method] as ((p: unknown) => Promise<{ data: Record<string, unknown> }>) | undefined;
+      if (typeof fn !== "function") throw new Error(`no method ${parsed.service}.${parsed.resourcePath.join(".")}.${parsed.method}`);
+      call = fn.bind(node);
+      methodCache.set(api, call);
     }
-    const res = await method(params);
+    const res = await call(params);
     return res.data;
   };
 }
@@ -105,7 +109,7 @@ export class GoogleSource extends Poller {
   }
 
   private serviceName(): string {
-    return splitApi(this.opts.api)[0] ?? "google";
+    return splitApi(this.opts.api).service ?? "google";
   }
 
   protected async poll(): Promise<PollResult[]> {

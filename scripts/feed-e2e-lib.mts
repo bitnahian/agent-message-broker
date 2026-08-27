@@ -90,15 +90,15 @@ export interface SeedJira {
 
 /** Seed a scratch Jira work item in the KAN project; returns a JQL that matches it plus cleanup. */
 export async function seedJiraTicket(): Promise<SeedJira> {
-  const { acli } = await import("./feed-e2e-acli.mts");
+  const { createWorkItem, deleteWorkItem } = await import("./feed-e2e-acli.mts");
   const stamp = Date.now();
   const summary = `amb e2e seed ticket ${stamp}`;
-  const key = await acli.createWorkItem("KAN", summary);
+  const key = await createWorkItem("KAN", summary);
   return {
     jql: `project = KAN AND summary ~ "amb e2e seed ticket ${stamp}"`,
     key,
     cleanup: async () => {
-      try { await acli.deleteWorkItem(key); } catch { /* ignore */ }
+      try { await deleteWorkItem(key); } catch { /* ignore */ }
     },
   };
 }
@@ -119,10 +119,10 @@ export async function waitHealthy(base: string, tries = 60): Promise<void> {
   throw new Error("server never became healthy");
 }
 
-export function spawnServer(base: string, port: number, ambHome: string) {
+export function spawnServer(base: string, port: number, ambHome: string, token = "e2e-test-token") {
   return spawn("npx", ["tsx", "packages/server/src/index.ts"], {
     cwd: REPO_ROOT,
-    env: { ...process.env, BROKER_PORT: String(port), BROKER_DB: ":memory:", AMB_HOME: ambHome, BROKER_LOG: "1" },
+    env: { ...process.env, BROKER_PORT: String(port), BROKER_DB: ":memory:", AMB_HOME: ambHome, BROKER_TOKEN: token, BROKER_LOG: "1" },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });

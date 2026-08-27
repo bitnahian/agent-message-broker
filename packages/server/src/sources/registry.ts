@@ -37,9 +37,19 @@ export class SourceRegistry {
   }
 }
 
+/** Feed lifecycle status (ADR-0006 preflight / ADR-0007 webhook). */
+export type FeedStatus =
+  | "configured"
+  | "auth-pending"
+  | "auth-failed"
+  | "running"
+  | "stopped"
+  | "errored";
+
 /** Manages running source instances for enabled source configs. */
 export class SourceManager {
   private running = new Map<string, SourceInstance>();
+  private statusMap = new Map<string, FeedStatus>();
 
   constructor(
     private store: BrokerStore,
@@ -67,8 +77,14 @@ export class SourceManager {
     if (!config) throw new Error(`source not found: ${configId}`);
     if (!this.registry.has(config.kind)) throw new Error(`no factory for kind: ${config.kind}`);
     const instance = this.registry.create(this.makeContext(config));
-    await instance.start();
-    this.running.set(configId, instance);
+    try {
+      await instance.start();
+      this.statusMap.set(configId, "running");
+      this.running.set(configId, instance);
+    } catch (err) {
+      this.statusMap.set(configId, "auth-failed");
+      throw err;
+    }
   }
 
   async stop(configId: string): Promise<void> {
@@ -77,12 +93,14 @@ export class SourceManager {
       await instance.stop();
       this.running.delete(configId);
     }
+    this.statusMap.set(configId, "stopped");
   }
 
   async startAll(): Promise<string[]> {
     const started: string[] = [];
     for (const config of this.store.listSources()) {
       if (!config.enabled || !this.registry.has(config.kind)) continue;
+      this.statusMap.set(config.id, "configured");
       await this.start(config.id);
       started.push(config.id);
     }
@@ -95,5 +113,15 @@ export class SourceManager {
 
   runningIds(): string[] {
     return [...this.running.keys()];
+  }
+
+  /** Feed lifecycle status for a source (defaults to configured/stopped). */
+  status(configId: string): FeedStatus {
+    return this.statusMap.get(configId) ?? "configured";
+  }
+
+  /** Map of all sourceId → current feed status. */
+  statuses(): Record<string, FeedStatus> {
+    return Object.fromEntries(this.statusMap);
   }
 }

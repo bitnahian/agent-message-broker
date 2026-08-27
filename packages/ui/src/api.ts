@@ -1,5 +1,5 @@
 export interface Topic { id: string; name: string; retainN: number; createdAt: number }
-export interface Source { id: string; topicId: string; kind: string; options: Record<string, unknown>; enabled: boolean }
+export interface Source { id: string; topicId: string; kind: string; options: Record<string, unknown>; enabled: boolean; status?: string }
 export interface Subscription { id: string; topicId: string; target: { agent: string; sessionId: string; label?: string }; template?: string }
 export interface Session { agent: string; sessionId: string; label?: string; reachable: boolean }
 export interface BrokerEvent { id: string; topicId: string; kind: string; payload: unknown; detectedAt: number }

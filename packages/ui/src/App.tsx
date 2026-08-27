@@ -247,18 +247,26 @@ function TopicSources({ topic, sources, refresh }: { topic: Topic; sources: Sour
         <div className="space-y-2">
           {sources.map((s) => {
             const isRunning = running.includes(s.id);
+            const status = s.status ?? (isRunning ? "running" : "stopped");
+            const running_ = status === "running";
+            const failed = status === "auth-failed" || status === "errored";
+            const statusCls = running_
+              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+              : failed
+                ? "bg-red-500/10 text-red-400 border border-red-500/30"
+                : "bg-zinc-800 text-zinc-500 border border-zinc-700/50";
             return (
               <div key={s.id} className="flex items-center justify-between gap-4 p-3 rounded-lg border border-zinc-800/50 bg-zinc-900/30">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium">{KIND_LABELS[s.kind] ?? s.kind}</span>
-                    <span className={`inline-flex rounded-full px-1.5 py-0 text-xs font-medium ${isRunning ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" : "bg-zinc-800 text-zinc-500 border border-zinc-700/50"}`}>{isRunning ? "running" : "stopped"}</span>
+                    <span className={`inline-flex rounded-full px-1.5 py-0 text-xs font-medium ${statusCls}`}>{status}</span>
                   </div>
                   <div className="text-xs text-zinc-600 mt-0.5">{s.id}</div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  {isRunning ? <button className="text-amber-400 text-xs px-2 py-1 rounded border border-amber-500/30 hover:bg-amber-500/10" onClick={() => api.stopSource(s.id).then(refreshRunning).catch(catchErr)}>Stop</button>
-                    : <button className="text-emerald-400 text-xs px-2 py-1 rounded border border-emerald-500/30 hover:bg-emerald-500/10" onClick={() => api.startSource(s.id).then(refreshRunning).catch(catchErr)}>Start</button>}
+                  {!running_ ? <button className="text-emerald-400 text-xs px-2 py-1 rounded border border-emerald-500/30 hover:bg-emerald-500/10" onClick={() => api.startSource(s.id).then(refreshRunning).catch(catchErr)}>Start</button>
+                    : <button className="text-amber-400 text-xs px-2 py-1 rounded border border-amber-500/30 hover:bg-amber-500/10" onClick={() => api.stopSource(s.id).then(refreshRunning).catch(catchErr)}>Stop</button>}
                   <ConfirmButton label="Delete" onConfirm={() => handleDelete(s.id)} disabled={deletingId === s.id} />
                 </div>
               </div>

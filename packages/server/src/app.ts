@@ -101,7 +101,11 @@ export function buildApp(opts: AppOptions): FastifyInstance {
     return store.createSource({ topicId: store.getTopic(b.topicId!)!.id, kind: b.kind!, options: b.options });
   });
 
-  app.get("/sources", () => store.listSources());
+  app.get("/sources", () => {
+    const sources = store.listSources();
+    const statuses = sourceManager.statuses();
+    return sources.map((s) => ({ ...s, status: statuses[s.id] ?? "configured" }));
+  });
 
   app.delete("/sources/:id", async (req, reply) => {
     const { id } = req.params as { id: string };

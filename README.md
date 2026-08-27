@@ -23,11 +23,12 @@ All three signal the live process — no headless-resume appends. (Claude/codex 
 | source | kind | how |
 |--------|------|-----|
 | any URL (Slack thread, file, ticket, PR…) | `polled-url` | fetch + ETag/sha256 change detection |
-| GitHub | `github` | `gh api repos/{o}/{r}/events` (or any gh api path) |
-| Jira | `jira` | `acli jira workitem search --jql …` |
-| Google Workspace | `gws` | any `gws <service> <resource> <method>` (gmail/drive/calendar), optional per-item detail fetch |
+| GitHub | `github` | octokit SDK poll of `repos/{o}/{r}/events`; feed event-type allowlist |
+| Jira | `jira` | Atlassian REST `rest/api/3/search/jql`; `key@updated` cursor |
+| Google Workspace | `gws` | local keyring (`gws`); SDK feed deferred to a future Workspace OWD source |
+| generic webhook | `generic-webhook` | optional opt-in tier (ADR-0007): envelope `{type,id,occurredAt,payload}` → `webhook:<type>` |
 
-Webhooks (GitHub/Jira/Workspace push) are intentionally not used: the broker is local-first and can't receive pushes without a tunnel.
+Webhooks are an **optional opt-in tier** (ADR-0007): polling is the baseline (ADR-0002/0006). The broker can open a shared tunnel (smee default, `127.0.0.1` stays closed) and re-register per-source vendor webhooks (GitHub repo hooks via octokit) against it. Jira-cloud/Google realtime are vendor-gated and stay poll-only.
 
 ## Quickstart
 
@@ -44,6 +45,7 @@ npx tsx scripts/e2e.mts   # full e2e: server + CLI + UI + retention
 CLI (same server, `BROKER_URL`/`BROKER_TOKEN` envs respected):
 
 ```bash
+amb config init            # scaffold ~/.amb/github|jira|google/credentials.json templates
 amb topics create prs --retain 50
 amb sources create --topic <name|id> --kind github --options '{"repo":"cli/cli"}'
 amb sources start <sourceId>
@@ -51,6 +53,8 @@ amb sessions                                   # discover running agent sessions
 amb subscriptions create --topic prs --agent pi --session <sessionId> --template "PR event: {{payload}}"
 amb events list --topic prs
 ```
+
+Credentials are **config-first** (ADR-0006): SDK pollers read `~/.amb/<kind>/credentials.json` (mode 0600) — github `{token}`, jira `{email,apiToken,domain}`, google `{clientEmail,privateKey,projectId}`. They never live in the broker DB.
 
 Server env: `BROKER_PORT` (default 4733), `BROKER_DB` (default `broker.db`), `BROKER_TOKEN` (optional; if unset a token is auto-generated at `~/.config/agent-message-broker/token`, mode 0600, and the CLI reads it automatically), `BROKER_UI_DIR`, `BROKER_LOG=1` for request logs. The server binds 127.0.0.1 only; the bearer token blocks other local processes and web pages you visit from driving the broker.
 

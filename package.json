@@ -27,5 +27,9 @@
     "@octokit/webhooks": "^13.9.1",
     "googleapis": "^150.0.1",
     "octokit": "^5.0.5"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.5.0"
   }
 }

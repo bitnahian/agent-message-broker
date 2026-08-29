@@ -1,10 +1,46 @@
 # agent-message-broker
 
-A local message broker for coding agents. Wire event sources (polled URLs, GitHub, Jira, Google Workspace) to **topics**, subscribe **running coding-agent sessions** (pi, claude-code, codex) to those topics, and let events steer them reactively — no per-agent background scripts.
+A local message broker for coding agents. Wire event sources (GitHub, Jira, Google Drive/Sheets/Docs, polled URLs, generic webhooks) to **topics**, subscribe **running coding-agent sessions** (pi, claude-code, codex) to those topics, and let events steer them reactively — no per-agent background scripts.
 
-## Architecture
+## Why
 
-Unified push-orchestration. The app/CLI subscribes a `sessionRef = { agent, sessionId }` to a topic; the server pushes rendered events via per-agent **delivery adapters** behind one uniform interface (`listSessions()`, `deliver()`).
+Coding agents are batch processes: you prompt, they run, they stop. But most of what an agent cares about — a PR got merged, a ticket changed, a spreadsheet got a new row — happens *between* prompts. The broker closes that gap: sources publish events to topics, the broker pushes them into the live session, and the agent reacts in the same conversation it's already having.
+
+## Quickstart
+
+Prerequisites: **Node ≥ 22.5** (the broker uses node's built-in SQLite) and git.
+
+```bash
+npm install
+npm run build              # build all workspace packages (incl. the UI)
+npm run start              # broker + UI + API at http://127.0.0.1:4733
+```
+
+The CLI ships as the `amb` bin of the `@amb/cli` workspace — use `npx amb` (or `npm link` in `packages/cli` to get a global `amb`). All commands below work against the running broker.
+
+See an event flow end to end:
+
+```bash
+npx amb topics create prs --retain 50
+npx amb sources create --topic prs --kind github --options '{"repo":"cli/cli"}'
+npx amb sources start <sourceId>
+npx amb events list --topic prs
+```
+
+Now subscribe a **running** agent session so events push to it live:
+
+```bash
+npx amb sessions                                                       # discover sessions
+npx amb subscriptions create --topic prs --agent pi --session <sessionId> --template "PR event: {{kind}} {{payload}}"
+```
+
+Verify an offline pass of the whole system (server + CLI + UI + retention, no external creds):
+
+```bash
+npm run e2e
+```
+
+## How it works
 
 ```
 event sources ──poll──▶ topics ──subscription──▶ delivery adapter ──push──▶ agent session
@@ -12,64 +48,87 @@ event sources ──poll──▶ topics ──subscription──▶ delivery ad
                               └── retainN event buffer (SQLite) + SSE live feed + UI
 ```
 
-| agent  | live delivery mechanism | e2e status |
-|--------|-------------------------|------------|
-| pi     | direct push via pi-intercom broker protocol (unix socket; registers as synthetic `amb-broker` session; steer between turns) | ✅ automated e2e against real broker |
-| claude | direct post to the session's **inbox unix socket** (cross-session messaging; discovery via `~/.claude/agent-registry.json`; optional `{"type":"auth","token":…}` first frame; delivery subject to `crossSessionInbound` controls, between tool calls / new turn when idle) | ⚠️ manual verify: `npx tsx scripts/verify-claude.mts <sessionId>` (needs claude auth) |
-| codex  | **app-server daemon JSON-RPC** (`codex app-server proxy`): `thread/list` → `thread/resume` → `turn/steer` when a turn is active, else `turn/start` | ⚠️ manual verify: `npx tsx scripts/verify-codex.mts <threadId>` (needs `codex login`) |
+The broker is unified push-orchestration. Subscriptions bind a `sessionRef = { agent, sessionId }` to a topic; the server renders events through the subscription's template and pushes them via per-agent **delivery adapters** behind one uniform interface (`listSessions()`, `deliver()`). All three adapters signal the live process — no headless-resume appends.
 
-All three signal the live process — no headless-resume appends. (Claude/codex live e2e still needs a human to authenticate those CLIs once.)
+Polling is the baseline ([ADR-0002](docs/adr/0002-local-first-no-inbound-webhooks.md), [ADR-0006](docs/adr/0006-sdk-polling-config-first-credentials.md)). Webhooks are an **optional opt-in tier** ([ADR-0007](docs/adr/0007-webhook-delivery-optional-tier.md)): the broker can open a shared tunnel (smee by default; `127.0.0.1` stays closed) and register per-source vendor webhooks against it. Jira Cloud and Google realtime webhooks are vendor-gated and stay poll-only.
 
-| source | kind | how |
-|--------|------|-----|
-| any URL (Slack thread, file, ticket, PR…) | `polled-url` | fetch + ETag/sha256 change detection |
-| GitHub | `github` | octokit SDK poll of `repos/{o}/{r}/events`; feed event-type allowlist |
+## Sources
+
+| Source | `kind` | How it polls |
+|---|---|---|
+| Any URL (Slack thread, file, ticket, PR…) | `polled-url` | fetch + ETag/sha256 change detection |
+| GitHub | `github` | octokit SDK poll of `repos/{o}/{r}/events`; event-type allowlist |
 | Jira | `jira` | Atlassian REST `rest/api/3/search/jql`; `key@updated` cursor |
-| Google | `google` | googleapis SDK feed as the logged-in developer (per-developer OAuth loopback → `~/.amb/google/token.json`); reads Drive/Sheets/Docs endpoints (`drive.files.list`, `sheets.spreadsheets.values.get`, …) |
-| generic webhook | `generic-webhook` | optional opt-in tier (ADR-0007): envelope `{type,id,occurredAt,payload}` → `webhook:<type>` |
+| Google | `google` | googleapis SDK as the logged-in developer; Drive/Sheets/Docs endpoints (`drive.files.list`, `sheets.spreadsheets.values.get`, …) |
+| Generic webhook | `generic-webhook` | opt-in tier; envelope `{type,id,occurredAt,payload}` → `webhook:<type>` |
 
-Webhooks are an **optional opt-in tier** (ADR-0007): polling is the baseline (ADR-0002/0006). The broker can open a shared tunnel (smee default, `127.0.0.1` stays closed) and re-register per-source vendor webhooks (GitHub repo hooks via octokit) against it. Jira-cloud/Google realtime are vendor-gated and stay poll-only.
+## Agent delivery
 
-## Quickstart
+| Agent | Mechanism | Status |
+|---|---|---|
+| pi | direct push via pi-intercom broker protocol (unix socket; steers between turns) | ✅ automated e2e against a real broker |
+| claude | direct post to the session's inbox unix socket (optional auth-token first frame) | ⚠️ manual: `npx tsx scripts/verify-claude.mts <sessionId>` |
+| codex | app-server daemon JSON-RPC (`turn/steer` when active, else `turn/start`) | ⚠️ manual: `npx tsx scripts/verify-codex.mts <threadId>` |
+
+Manual verification needs the target CLI authenticated once by a human. Claude delivery is additionally subject to the target session's `crossSessionInbound` controls — untokenized broker posts may show a hold-for-approval notice. For pi, the automated e2e covers broker-level delivery; `npx tsx scripts/verify-pi-live.mts <sessionId>` additionally exercises the live interactive `steer` path against a real pi session.
+
+## Configuration
+
+### Server environment
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `BROKER_PORT` | `4733` | HTTP port |
+| `BROKER_DB` | `broker.db` | SQLite path (`:memory:` for ephemeral) |
+| `BROKER_TOKEN` | auto-generated¹ | bearer token for the API |
+| `BROKER_UI_DIR` | packaged UI | serve a different UI build |
+| `BROKER_LOG` | off | `1` enables request logs |
+
+¹ Auto-generated at `~/.config/agent-message-broker/token` (mode 0600); the CLI reads it automatically.
+
+### Source credentials
+
+Credentials are **config-first** ([ADR-0006](docs/adr/0006-sdk-polling-config-first-credentials.md)): each kind reads `~/.amb/<kind>/credentials.json` (mode 0600), never the broker DB.
 
 ```bash
-npm install
-
-npm run verify            # build + test all 7 nx projects
-npx nx run @amb/ui:build  # build the UI (served by the server)
-
-npm run start             # → http://127.0.0.1:4733  (UI + API)
-npx tsx scripts/e2e.mts   # full e2e: server + CLI + UI + retention
-npx tsx scripts/e2e-feeds.mts   # live Feed e2e: real github+jira SDK polls -> topic -> delivery (needs creds; seeds+cleans throwaway repo/ticket)
+npx amb config init                  # scaffold github|jira|google templates
 ```
 
-CLI (same server, `BROKER_URL`/`BROKER_TOKEN` envs respected):
+| Kind | Shape |
+|---|---|
+| `github` | `{ token }` |
+| `jira` | `{ email, apiToken, domain }` |
+| `google` | OAuth client (installed/web) — written by the login flow; service-account and authorized-user gcloud shapes also load as fallbacks |
+
+Google is a **per-developer OAuth loopback flow**:
 
 ```bash
-amb config init            # scaffold ~/.amb/github|jira|google/credentials.json templates
-amb google login --credentials=.secrets/client_secret_2_*.json   # per-dev OAuth: install client, open loopback consent, cache token.json
-amb topics create prs --retain 50
-amb sources create --topic <name|id> --kind github --options '{"repo":"cli/cli"}'
-amb sources start <sourceId>
-amb sessions                                   # discover running agent sessions
-amb subscriptions create --topic prs --agent pi --session <sessionId> --template "PR event: {{payload}}"
-amb events list --topic prs
+npx amb google login --credentials=<downloaded-oauth-client.json>
 ```
 
-Credentials are **config-first** (ADR-0006): SDK pollers read `~/.amb/<kind>/credentials.json` (mode 0600) — github `{token}`, jira `{email,apiToken,domain}`, google (standard gcloud shape) a service-account `{client_email,private_key,project_id,type}` or OAuth `{client_id,client_secret,refresh_token,type}`. For the distributed dev use case, **Google is a per-developer OAuth loopback flow**: `amb google login` installs the downloaded OAuth client at `~/.amb/google/credentials.json` (mode 0600), runs the localhost consent handshake (ephemeral port, browser opens, code captured, token exchanged), and caches the refresh/access token at `~/.amb/google/token.json` (mode 0600). The google feed then acts as the logged-in developer, which is what unlocks Drive/Sheets/Docs reads. The service-account/authorized_user shapes still load as a fallback. Credentials never live in the broker DB.
+`amb google login` performs consent once: it installs your downloaded OAuth client at `~/.amb/google/credentials.json` (0600), runs a localhost consent handshake (ephemeral port, browser opens, code captured, token exchanged), and caches the token at `~/.amb/google/token.json` (0600). The google feed then acts as *you* — which is what unlocks Drive/Sheets/Docs. The cached token auto-refreshes thereafter.
 
-Server env: `BROKER_PORT` (default 4733), `BROKER_DB` (default `broker.db`), `BROKER_TOKEN` (optional; if unset a token is auto-generated at `~/.config/agent-message-broker/token`, mode 0600, and the CLI reads it automatically), `BROKER_UI_DIR`, `BROKER_LOG=1` for request logs. The server binds 127.0.0.1 only; the bearer token blocks other local processes and web pages you visit from driving the broker.
+## Security model
 
-## Retention
+- The server binds **127.0.0.1 only**; the bearer token blocks other local processes (and web pages you visit) from driving the broker.
+- Credential files live on disk at `~/.amb/<kind>/credentials.json`, mode 0600, verified by the loader (world-readable files are rejected). They never enter the broker DB or `Source.options`.
+- The live e2e harnesses stage credentials into ephemeral temp homes that are deleted on exit — tests never read your real `~/.amb` (see the [e2e secrets contract](docs/agents/e2e-secrets.md)).
 
-Every event is persisted per topic (`retainN`, default 100) even with zero subscribers; SSE clients get `?replay=1` buffer replay. Late subscribers can also `GET /events?topicId=…`.
+## Development
 
-## Monorepo
+nx + npm workspaces. Projects: `core` (types/DeliveryAdapter), `server` (Fastify + SQLite + SSE), `ui`, `cli`, `adapter-pi|claude|codex`.
 
-nx + npm workspaces. Projects: `core` (types/DeliveryAdapter), `server` (Fastify+SQLite+SSE), `ui`, `cli`, `adapter-pi|claude|codex`. Per-iteration implementation logs in `docs/implementation-log/`.
+```bash
+npm run verify             # build + test all 7 projects
+npm run e2e                # offline full-system e2e
+npx tsx scripts/e2e-feeds.mts    # live github+jira feed e2e (needs E2E_* env)
+npx tsx scripts/e2e-google.mts   # live google sheets feed e2e (needs consent-derived token)
+```
 
-## Manual verification pending
+The live harnesses source account-specific values from `.env` or the environment — copy `.env.example` to `.env` and fill in your own. See the [e2e secrets contract](docs/agents/e2e-secrets.md) for keys, CI mapping, and rotation notes.
 
-- **claude delivery**: `npx tsx scripts/verify-claude.mts <sessionId> [token]` (claude must be authed; message delivery is subject to the target session's `crossSessionInbound` controls — untokenized broker posts may show a hold-for-approval notice).
-- **codex delivery**: `npx tsx scripts/verify-codex.mts <threadId>` (needs `codex login`).
-- **pi live interactive delivery**: automated e2e covers broker-level delivery; injecting into a live interactive pi session additionally exercises pi-intercom's own `sendUserMessage(steer)` path.
+Design decisions live in [docs/adr/](docs/adr/); the feed abstraction ([ADR-0005](docs/adr/0005-feed-abstraction.md)) is the core model.
+
+## License
+
+[MIT](LICENSE)

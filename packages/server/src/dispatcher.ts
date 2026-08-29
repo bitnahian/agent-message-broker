@@ -75,6 +75,17 @@ export class Dispatcher {
         continue;
       }
       const message = this.renderTemplate(sub.template, event);
+      if (adapter.isSessionActive) {
+        const active = await adapter.isSessionActive(sub.target);
+        if (!active) {
+          // The user exited the session — skip the delivery attempt entirely
+          // and record why, instead of pushing into the void.
+          const error = "session inactive — delivery skipped";
+          outcome.failures.push({ sessionId: sub.target.sessionId, error });
+          this.store.recordDelivery(event.id, sub.id, false, error);
+          continue;
+        }
+      }
       const res = await adapter.deliver(sub.target, { message, eventId: event.id });
       this.store.recordDelivery(event.id, sub.id, res.ok, res.ok ? undefined : (res.detail ?? "unknown"));
       if (res.ok) outcome.delivered++;

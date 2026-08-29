@@ -5,6 +5,21 @@ import net from "node:net";
 import type { DeliveryAdapter, DeliveryResult, SessionRef } from "@amb/core";
 import { createMessageReader, writeMessage } from "./framing.js";
 
+/**
+ * Liveness of a registered pi session: its process must still exist.
+ * kill(pid, 0) throws ESRCH when the process is gone; EPERM means it exists
+ * but is owned by someone else — treat that as alive.
+ */
+function processAlive(pid: number): boolean {
+  if (!pid || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
 interface SessionInfo {
   id: string;
   name?: string;
@@ -114,7 +129,15 @@ export class PiAdapter implements DeliveryAdapter {
     const res = await req;
     return res.sessions
       .filter((s) => s.id !== this.sessionId) // exclude our synthetic session
+      .filter((s) => s.name !== this.name) // exclude other brokers' synthetic registrations (dead brokers linger in the intercom registry)
+      .filter((s) => processAlive(s.pid)) // exclude sessions whose process the user has exited
       .map((s) => ({ agent: "pi" as const, sessionId: s.id, label: s.name ?? s.id }));
+  }
+
+  /** A session is active iff it survives the list filters above (live process, still registered). */
+  async isSessionActive(target: SessionRef): Promise<boolean> {
+    const sessions = await this.listSessions();
+    return sessions.some((s) => s.sessionId === target.sessionId);
   }
 
   async deliver(target: SessionRef, payload: { message: string; eventId: string }): Promise<DeliveryResult> {

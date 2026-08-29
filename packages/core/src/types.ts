@@ -115,6 +115,13 @@ export interface DeliveryAdapter {
   listSessions(): Promise<SessionRef[]>;
   /** Push a rendered payload into a session. */
   deliver(target: SessionRef, payload: { message: string; eventId: string }): Promise<DeliveryResult>;
+  /**
+   * Optional liveness probe: false means the session is gone (e.g. the user
+   * exited it) and deliveries to it should be skipped, not attempted.
+   * Adapters that cannot tell may omit this — the dispatcher then attempts
+   * delivery as before.
+   */
+  isSessionActive?(target: SessionRef): Promise<boolean>;
 }
 
 export interface DeliveryResult {

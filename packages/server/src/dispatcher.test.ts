@@ -90,4 +90,57 @@ describe("Dispatcher.agents / dispatch / reconcile", () => {
     expect(outcome).toMatchObject({ attempts: 1, delivered: 1, failures: [] });
     expect(delivered).toHaveLength(1);
   });
+
+  it("dispatch skips delivery to inactive sessions when the adapter can tell", async () => {
+    const store = makeStore();
+    const topic = store.createTopic("inactive-sub");
+    const sub = store.createSubscription({ topicId: topic.id, target: { agent: "pi", sessionId: "gone" } });
+    const d = new Dispatcher(store);
+    let deliverCalls = 0;
+    d.registerAdapter({
+      agent: "pi",
+      listSessions: async () => [],
+      isSessionActive: async () => false,
+      deliver: async () => { deliverCalls++; return { ok: true }; },
+    } as DeliveryAdapter);
+    const outcome = await d.dispatch(ev("e1", topic.id));
+    expect(deliverCalls).toBe(0); // never attempted
+    expect(outcome.delivered).toBe(0);
+    expect(outcome.failures).toEqual([{ sessionId: "gone", error: expect.stringContaining("session inactive") }]);
+    const rows = store.listDeliveries(undefined, 10);
+    expect(rows.some((r) => r.subscriptionId === sub.id && !r.ok && (r.error ?? "").includes("session inactive"))).toBe(true);
+  });
+
+  it("dispatch delivers normally when the adapter reports the session active", async () => {
+    const store = makeStore();
+    const topic = store.createTopic("active-sub");
+    store.createSubscription({ topicId: topic.id, target: { agent: "pi", sessionId: "s1" } });
+    const d = new Dispatcher(store);
+    let deliverCalls = 0;
+    d.registerAdapter({
+      agent: "pi",
+      listSessions: async () => [],
+      isSessionActive: async () => true,
+      deliver: async () => { deliverCalls++; return { ok: true }; },
+    } as DeliveryAdapter);
+    const outcome = await d.dispatch(ev("e1", topic.id));
+    expect(deliverCalls).toBe(1);
+    expect(outcome.delivered).toBe(1);
+  });
+
+  it("dispatch still delivers for adapters without isSessionActive (optional capability)", async () => {
+    const store = makeStore();
+    const topic = store.createTopic("legacy-adapter");
+    store.createSubscription({ topicId: topic.id, target: { agent: "claude", sessionId: "s1" } });
+    const d = new Dispatcher(store);
+    let deliverCalls = 0;
+    d.registerAdapter({
+      agent: "claude",
+      listSessions: async () => [],
+      deliver: async () => { deliverCalls++; return { ok: true }; },
+    } as DeliveryAdapter);
+    const outcome = await d.dispatch(ev("e1", topic.id));
+    expect(deliverCalls).toBe(1);
+    expect(outcome.delivered).toBe(1);
+  });
 });

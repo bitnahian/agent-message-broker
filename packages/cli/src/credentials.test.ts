@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, statSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { scaffoldCredentials, ambHome } from "./credentials.js";
+import { scaffoldCredentials, ambHome, installGoogleOAuthClient } from "./credentials.js";
 
 let base: string;
 beforeEach(() => {
@@ -58,5 +58,36 @@ describe("ambHome", () => {
       if (prev !== undefined) process.env.AMB_HOME = prev;
       else delete process.env.AMB_HOME;
     }
+  });
+});
+
+describe("installGoogleOAuthClient", () => {
+  it("copies an installed-app OAuth client into ~/.amb/google/credentials.json 0600", () => {
+    const src = join(base, "client.json");
+    writeFileSync(src, JSON.stringify({ installed: { client_id: "cid", client_secret: "sec", redirect_uris: ["http://localhost"] } }));
+    const dest = installGoogleOAuthClient(src, base);
+    expect(dest).toBe(join(base, "google", "credentials.json"));
+    expect(statSync(dest).mode & 0o077).toBe(0);
+    const parsed = JSON.parse(readFileSync(dest, "utf8")) as { installed: { client_id: string } };
+    expect(parsed.installed.client_id).toBe("cid");
+  });
+
+  it("accepts flat and web shapes", () => {
+    const src = join(base, "flat.json");
+    writeFileSync(src, JSON.stringify({ client_id: "cid", client_secret: "sec", redirect_uris: ["http://localhost:8080"] }));
+    expect(installGoogleOAuthClient(src, base)).toBe(join(base, "google", "credentials.json"));
+    expect(JSON.parse(readFileSync(join(base, "google", "credentials.json"), "utf8")).client_id).toBe("cid");
+  });
+
+  it("rejects JSON that is not an OAuth client (missing client_secret)", () => {
+    const src = join(base, "bad.json");
+    writeFileSync(src, JSON.stringify({ client_id: "cid" }));
+    expect(() => installGoogleOAuthClient(src, base)).toThrow(/missing client_id\/client_secret/);
+  });
+
+  it("rejects unparseable JSON", () => {
+    const src = join(base, "junk.json");
+    writeFileSync(src, "not json");
+    expect(() => installGoogleOAuthClient(src, base)).toThrow(/not valid JSON/);
   });
 });

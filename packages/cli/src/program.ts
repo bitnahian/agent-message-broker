@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { scaffoldCredentials } from "./credentials.js";
+import { scaffoldCredentials, installGoogleOAuthClient } from "./credentials.js";
 import type { BrokerClient } from "./client.js";
 
 const print = (v: unknown) => console.log(JSON.stringify(v, null, 2));
@@ -14,6 +14,20 @@ export function createProgram(client: BrokerClient): Command {
     .action((o: { kind?: string }) => {
       const kinds = o.kind ? [o.kind] : undefined;
       print({ written: scaffoldCredentials({ kinds }) });
+    });
+
+  const google = program.command("google").description("google per-developer OAuth (loopback)");
+  google.command("login")
+    .description("install a Google OAuth client (optional) and run the loopback login")
+    .option("--credentials <path>", "path to a downloaded Google OAuth client JSON (installed/web), e.g. .secrets/client_secret_*.json")
+    .action(async (o: { credentials?: string }) => {
+      if (o.credentials) {
+        const dest = installGoogleOAuthClient(o.credentials);
+        console.log("installed google OAuth client at " + dest);
+      }
+      const { googleLogin } = await import("@amb/server/sources/google-auth");
+      const result = await googleLogin();
+      print({ email: result.email ?? null, savedTokenPath: result.savedTokenPath });
     });
 
   const topics = program.command("topics").description("manage topics");

@@ -2,31 +2,48 @@ import { describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import { createDb } from "../db.js";
 import { BrokerStore } from "../store.js";
-import { GitHubSource, type GhRunner } from "./github.js";
+import { GitHubSource, type OctokitLike, type GhEvent } from "./github.js";
 import type { SourceContext } from "./registry.js";
 
-const fixture = [
+const fixture: GhEvent[] = [
   { id: "100", type: "PushEvent", actor: { login: "ana" }, repo: { name: "o/r" }, created_at: "2026-01-01T00:00:00Z", payload: { commits: [{ message: "fix bug\n\nbody" }] } },
   { id: "101", type: "PullRequestEvent", actor: { login: "bob" }, repo: { name: "o/r" }, created_at: "2026-01-01T00:01:00Z", payload: { action: "opened", pull_request: { number: 42 } } },
 ];
 
-function setup(runner: GhRunner) {
+function fakeOctokit(events: GhEvent[] | (() => GhEvent[]), opts: { fail?: boolean; calls?: string[] } = {}): OctokitLike {
+  return {
+    rest: {
+      activity: {
+        listRepoEvents: async ({ owner, repo, per_page }) => {
+          opts.calls?.push(`listRepoEvents:${owner}/${repo}:${per_page}`);
+          if (opts.fail) throw new Error("boom");
+          const e = typeof events === "function" ? events() : events;
+          return { data: e };
+        },
+      },
+      repos: {},
+    },
+  };
+}
+
+function setup(api?: OctokitLike, options: Record<string, unknown> = { repo: "o/r" }) {
   const store = new BrokerStore(createDb(":memory:"));
   const app = buildApp({ store });
   const topic = store.createTopic("gh");
-  const source = store.createSource({ topicId: topic.id, kind: "github", options: { repo: "o/r" } });
+  const source = store.createSource({ topicId: topic.id, kind: "github", options });
   const ctx: SourceContext = {
     store, bus: app.bus, config: source,
     getState: (k) => store.getSourceState(source.id, k),
     setState: (k, v) => store.setSourceState(source.id, k, v),
     emit: async (kind, payload) => { await app.bus.publish({ topicId: topic.id, sourceId: source.id, kind, payload }); },
   };
-  return { store, src: new GitHubSource(ctx, runner) };
+  const src = api ? new GitHubSource(ctx, api) : new GitHubSource(ctx, fakeOctokit(fixture));
+  return { store, src };
 }
 
-describe("GitHubSource", () => {
+describe("GitHubSource (SDK poller)", () => {
   it("emits github:<Type> events deduped by event id", async () => {
-    const { store, src } = setup(async () => JSON.stringify(fixture));
+    const { store, src } = setup();
     expect(await src.tick()).toBe(2);
     expect(await src.tick()).toBe(0); // same ids deduped
     const events = store.listEvents();
@@ -37,26 +54,48 @@ describe("GitHubSource", () => {
 
   it("emits new events on later polls", async () => {
     let data = fixture;
-    const { store, src } = setup(async () => JSON.stringify(data));
+    const { store, src } = setup(fakeOctokit(() => data));
     await src.tick();
     data = [{ id: "102", type: "WatchEvent", actor: { login: "cid" }, repo: { name: "o/r" }, created_at: "", payload: {} }, ...fixture];
     expect(await src.tick()).toBe(1);
     expect(store.listEvents().find((e) => e.kind === "github:WatchEvent")).toBeTruthy();
   });
 
-  it("emits github:error once on runner failure", async () => {
-    const { store, src } = setup(async () => { throw new Error("gh not authed"); });
+  it("emits github:error on API failure", async () => {
+    const { store, src } = setup(fakeOctokit(fixture, { fail: true }));
     expect(await src.tick()).toBe(1);
-    expect(await src.tick()).toBe(0);
+    expect(await src.tick()).toBe(0); // same key deduped
     expect(store.listEvents()[0]?.kind).toBe("github:error");
   });
 
+  it("filters to the feed event-type allowlist", async () => {
+    const { store, src } = setup(fakeOctokit(fixture), { repo: "o/r", eventTypes: ["PushEvent"] });
+    expect(await src.tick()).toBe(1);
+    const kinds = store.listEvents().map((e) => e.kind);
+    expect(kinds).toEqual(["github:PushEvent"]);
+  });
+
+  it("respects perPage cap", async () => {
+    const calls: string[] = [];
+    const many = Array.from({ length: 5 }, (_, i) => ({ id: String(i), type: "WatchEvent", actor: { login: "u" }, repo: { name: "r" }, created_at: "", payload: {} }));
+    const { store, src } = setup(fakeOctokit(many, { calls }), { repo: "o/r", perPage: 3 });
+    expect(await src.tick()).toBe(3);
+    expect(calls[0]).toContain(":3");
+  });
+
+  it("queries owner/repo split", async () => {
+    const calls: string[] = [];
+    const { src } = setup(fakeOctokit([], { calls }), { repo: "cli/cli", perPage: 7 });
+    await src.tick();
+    expect(calls[0]).toBe("listRepoEvents:cli/cli:7");
+  });
+
   it("summarizes every GitHub event type and edge shapes", async () => {
-    const mkEvent = (id: string, type: string, opts: Record<string, unknown> = {}) => ({
+    const mkEvent = (id: string, type: string, opts: Record<string, unknown> = {}): GhEvent => ({
       id, type, actor: { login: "user" }, repo: { name: "o/r" }, created_at: "2026-01-01", payload: {},
       ...opts,
     });
-    const events = [
+    const events: GhEvent[] = [
       mkEvent("e1", "IssuesEvent", { payload: { action: "opened", issue: { number: 3 } } }),
       mkEvent("e2", "IssueCommentEvent"),
       mkEvent("e3", "CreateEvent", { payload: { ref_type: "branch" } }),
@@ -68,13 +107,10 @@ describe("GitHubSource", () => {
       // shape edge cases
       mkEvent("e9", "PushEvent", { actor: undefined, repo: undefined, payload: { commits: [] } }),
       mkEvent("e10", "PushEvent", { payload: { commits: [{ message: "headline" }] } }),
-    ] as any;
-    const { store, src } = setup(async () => JSON.stringify(events));
+    ];
+    const { store, src } = setup(fakeOctokit(events));
     await src.tick();
-    const toSummary = (kind: string) => {
-      const ev = store.listEvents().find((e) => e.kind === kind);
-      return (ev?.payload as { summary: string }).summary;
-    };
+    const toSummary = (kind: string) => (store.listEvents().find((e) => e.kind === kind)?.payload as { summary: string }).summary;
     expect(toSummary("github:IssuesEvent")).toBe("user opened issue #3 in o/r");
     expect(toSummary("github:IssueCommentEvent")).toBe("user commented in o/r");
     expect(toSummary("github:CreateEvent")).toBe("user created branch in o/r");
@@ -83,50 +119,62 @@ describe("GitHubSource", () => {
     expect(toSummary("github:ReleaseEvent")).toBe("user released in o/r");
     expect(toSummary("github:WatchEvent")).toBe("user starred o/r");
     expect(toSummary("github:MysteryEvent")).toBe("user MysteryEvent in o/r");
-    // no actor/repo => fallback "?"
-    const noActor = store.listEvents().find((e) => e.kind === "github:PushEvent" && (e.payload as any).summary.includes("?"));
-    expect(noActor).toBeTruthy();
-
-    // app-bus-level config for github includes a `path` override branch
+    expect(store.listEvents().some((e) => (e.payload as { summary: string }).summary.includes("?"))).toBe(true);
   });
 
-  it("poll honors the perPage cap and the raw path override", async () => {
-    const events = Array.from({ length: 5 }, (_, i) => ({
-      id: String(i), type: "WatchEvent", actor: { login: "u" }, repo: { name: "r" }, created_at: "", payload: {},
-    }));
-    // path override
-    const store1 = new BrokerStore(createDb(":memory:"));
-    const app1 = buildApp({ store1 });
-    const t1 = store1.createTopic("ghp");
-    const s1 = store1.createSource({ topicId: t1.id, kind: "github", options: { path: "notifications" } });
-    const seen: string[] = [];
-    const src1 = new GitHubSource(
-      { store: store1, bus: app1.bus, config: s1, getState: (k) => store1.getSourceState(s1.id, k), setState: (k, v) => store1.setSourceState(s1.id, k, v), emit: async () => {} },
-      async (p) => { seen.push(p); return JSON.stringify(events); },
-    );
-    expect(await src1.tick()).toBe(5);
-    expect(seen).toEqual(["notifications"]);
+  it("returns github:error when repo missing (descriptive)", async () => {
+    const { store, src } = setup(undefined, {});
+    await src.tick();
+    expect(store.listEvents()[0]?.kind).toBe("github:error");
+  });
+});
 
-    const store2 = new BrokerStore(createDb(":memory:"));
-    const app2 = buildApp({ store2 });
-    const t2 = store2.createTopic("ghp2");
-    const s2 = store2.createSource({ topicId: t2.id, kind: "github", options: { repo: "o/r" } });
-    const src2 = new GitHubSource(
-      { store: store2, bus: app2.bus, config: s2, getState: (k) => store2.getSourceState(s2.id, k), setState: (k, v) => store2.setSourceState(s2.id, k, v), emit: async () => {} },
-      async (p) => JSON.stringify(events),
-    );
-    expect(await src2.tick()).toBe(5);
+describe("GitHubSource webhook registration", () => {
+  it("registerWebhook via octokit createWebhook returns hook id", async () => {
+    const created: unknown[] = [];
+    const api: OctokitLike = {
+      rest: {
+        activity: { listRepoEvents: async () => ({ data: [] }) },
+        repos: {
+          createWebhook: async (p) => { created.push(p); return { data: { id: 99 } }; },
+          deleteWebhook: async () => ({ status: 204 }),
+        },
+      },
+    };
+    const { src } = setup(api, { repo: "o/r" });
+    const id = await src.registerWebhook("o", "r", "https://smee.io/x", ["push", "pull_request"], "sec");
+    expect(id).toBe(99);
+    expect(created[0]).toMatchObject({
+      owner: "o", repo: "r", name: "web", events: ["push", "pull_request"],
+      config: { url: "https://smee.io/x", content_type: "json", secret: "sec" },
+    });
   });
 
-  it("throws a descriptive error when neither repo nor path is set", async () => {
-    const store = new BrokerStore(createDb(":memory:"));
-    const app = buildApp({ store });
-    const t = store.createTopic("ghx");
-    const s = store.createSource({ topicId: t.id, kind: "github", options: {} });
-    const src = new GitHubSource(
-      { store, bus: app.bus, config: s, getState: (k) => store.getSourceState(s.id, k), setState: (k, v) => store.setSourceState(s.id, k, v), emit: async () => {} },
-      async () => JSON.stringify([]),
-    );
-    await expect(src.tick()).resolves.toBe(1);
+  it("deleteWebhook via octokit returns success", async () => {
+    const api: OctokitLike = {
+      rest: {
+        activity: { listRepoEvents: async () => ({ data: [] }) },
+        repos: {
+          createWebhook: async () => ({ data: { id: 1 } }),
+          deleteWebhook: async () => ({ status: 204 }),
+        },
+      },
+    };
+    const { src } = setup(api);
+    expect(await src.deleteWebhook("o", "r", 7)).toBe(true);
+  });
+
+  it("deleteWebhook returns false on non-2xx", async () => {
+    const api: OctokitLike = {
+      rest: {
+        activity: { listRepoEvents: async () => ({ data: [] }) },
+        repos: {
+          createWebhook: async () => ({ data: { id: 1 } }),
+          deleteWebhook: async () => ({ status: 404 }),
+        },
+      },
+    };
+    const { src } = setup(api);
+    expect(await src.deleteWebhook("o", "r", 7)).toBe(false);
   });
 });

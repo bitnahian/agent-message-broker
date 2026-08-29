@@ -94,6 +94,10 @@ _Avoid_: Inbound hook, callback URL (unspecific), receiver endpoint
 A swappable plugin that turns a local receiver into a reachable public URL so vendor webhooks can POST in. The default **smee** provider keeps `127.0.0.1` closed (outbound WebSocket to a relay); alternative providers (untun/Cloudflare, ngrok) may open a true inbound public surface. Providers are hot-swappable at runtime.
 _Avoid_: Tunnel, relay, proxy (when meaning the plugin contract)
 
+**Credentials (config-first)**:
+SDK pollers read vendor credentials from `~/.amb/<kind>/credentials.json` (mode 0600) — github `{token}`, jira `{email,apiToken,domain}`, google an OAuth **per-developer** loopback client (`~/.amb/google/credentials.json`) + cached token (`~/.amb/google/token.json`). Google's service-account `{client_email,private_key,project_id}` / authorized_user `{client_id,client_secret,refresh_token}` shapes still load as a fallback. Credentials are never stored in the broker DB; `Source.options` holds non-secret config only (entity scope, event-type allowlist, mechanism). `amb config init` scaffolds templates; `amb google login` runs the loopback OAuth handshake.
+_Avoid_: env-var-only creds, inline secrets in `Source.options`
+
 ## Auth
 
 **Bearer Token**:

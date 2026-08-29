@@ -45,7 +45,7 @@ describe("server bootstrap (in-process)", () => {
     const res = await get("/sources/running");
     expect(res.status).toBe(200);
     const { kinds } = (await res.json()) as { kinds: string[] };
-    expect(kinds.sort()).toEqual(["github", "gws", "jira", "polled-url"]);
+    expect(kinds.sort()).toEqual(["generic-webhook", "github", "google", "gws", "jira", "polled-url"]);
   });
 
   it("runs the dispatcher outbox reconcile on boot and reports empty deliveries", async () => {

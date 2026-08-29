@@ -5,6 +5,7 @@ import type { BrokerEvent, SessionRef } from "@amb/core";
 import { Dispatcher } from "./dispatcher.js";
 import { EventBus } from "./event-bus.js";
 import { SourceManager, SourceRegistry } from "./sources/registry.js";
+import { verifyAndDecode, type GenericWebhookOptions } from "./sources/generic-webhook.js";
 import { SseHub, formatSse } from "./sse.js";
 import { BrokerStore } from "./store.js";
 
@@ -100,7 +101,11 @@ export function buildApp(opts: AppOptions): FastifyInstance {
     return store.createSource({ topicId: store.getTopic(b.topicId!)!.id, kind: b.kind!, options: b.options });
   });
 
-  app.get("/sources", () => store.listSources());
+  app.get("/sources", () => {
+    const sources = store.listSources();
+    const statuses = sourceManager.statuses();
+    return sources.map((s) => ({ ...s, status: statuses[s.id] ?? "configured" }));
+  });
 
   app.delete("/sources/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -166,8 +171,20 @@ export function buildApp(opts: AppOptions): FastifyInstance {
     const provided = (req.headers["x-broker-secret"] ?? (req.query as { secret?: string }).secret) as string | undefined;
     if (secret && provided !== secret) return reply.code(401).send({ error: "bad secret" });
     const payload = (req.body ?? {}) as Record<string, unknown>;
-    const kind = String(payload.kind ?? source.kind ?? "webhook");
-    const result = await bus.publish({ topicId: source.topicId, sourceId: source.id, kind, payload });
+    let kind = String(payload.kind ?? source.kind ?? "webhook");
+    let publishedPayload: unknown = payload;
+    // generic-webhook is a first-class feed kind: verify+decode envelope (ADR-0007).
+    if (source.kind === "generic-webhook") {
+      try {
+        const env = verifyAndDecode(source.options as GenericWebhookOptions, payload, provided);
+        kind = `webhook:${env.type}`;
+        publishedPayload = env;
+      } catch (err) {
+        const status = (err as { status?: number }).status ?? 400;
+        return reply.code(status).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    const result = await bus.publish({ topicId: source.topicId, sourceId: source.id, kind, payload: publishedPayload });
     return reply.code(202).send({ event: result?.event ?? null });
   });
 

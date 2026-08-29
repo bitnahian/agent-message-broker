@@ -16,12 +16,16 @@ Copy `.env.example` to `.env` if you want to run the live e2e harnesses against 
 - **Build + test must pass** before every commit: `npm run verify`.
 - Work on `feature/<name>` branches off `master`. Commit messages are short, imperative, prefixed by area: `ui:`, `server:`, `cli:`, `core:`, `adapter-<agent>:`, `docs:`, `repo:`.
 - Keep coverage ≥ 80% statements and branches per package (`bash scripts/verify-coverage-80.sh`).
-- New source kinds follow the Feed abstraction ([docs/adr/0005-feed-abstraction.md](docs/adr/0005-feed-abstraction.md)): an injectable SDK runner (no CLI exec), config-first credentials, loud credential errors.
+- New source kinds follow the Feed abstraction: an injectable SDK runner (no CLI exec), config-first credentials, loud credential errors.
 - No secrets, tokens, or personal account data in code, tests, docs, or fixtures — account-specific values belong in `.env` (gitignored).
 
-## Design decisions
+## Design principles
 
-Substantive architectural changes go through an ADR in [docs/adr/](docs/adr/). Read [ADR-0002](docs/adr/0002-local-first-no-inbound-webhooks.md) (local-first), [ADR-0003](docs/adr/0003-live-push-not-headless-resume.md) (live push, not headless resume), and [ADR-0005](docs/adr/0005-feed-abstraction.md) (feeds) before proposing changes to delivery or sources.
+Substantive architectural changes should be floated in an issue or PR description before implementation. The core principles new work must respect:
+
+- **Local-first**: the broker binds `127.0.0.1` and polls out; nothing requires inbound reachability.
+- **Live push, not headless resume**: deliveries steer the agent's running session; no background appending to dead sessions.
+- **Feeds, not CLI exec**: sources call vendor SDKs/REST through injectable runners, never shell out to `gh`/`acli`-style CLIs.
 
 ## Reporting bugs
 

@@ -50,7 +50,7 @@ event sources ──poll──▶ topics ──subscription──▶ delivery ad
 
 The broker is unified push-orchestration. Subscriptions bind a `sessionRef = { agent, sessionId }` to a topic; the server renders events through the subscription's template and pushes them via per-agent **delivery adapters** behind one uniform interface (`listSessions()`, `deliver()`). All three adapters signal the live process — no headless-resume appends.
 
-Polling is the baseline ([ADR-0002](docs/adr/0002-local-first-no-inbound-webhooks.md), [ADR-0006](docs/adr/0006-sdk-polling-config-first-credentials.md)). Webhooks are an **optional opt-in tier** ([ADR-0007](docs/adr/0007-webhook-delivery-optional-tier.md)): the broker can open a shared tunnel (smee by default; `127.0.0.1` stays closed) and register per-source vendor webhooks against it. Jira Cloud and Google realtime webhooks are vendor-gated and stay poll-only.
+Polling is the baseline — every source pulls on an interval, so nothing requires the broker to be reachable from the internet. Webhooks are an **optional opt-in tier**: the broker can open a shared tunnel (smee by default; `127.0.0.1` stays closed) and register per-source vendor webhooks against it. Jira Cloud and Google realtime webhooks are vendor-gated and stay poll-only.
 
 ## Sources
 
@@ -88,7 +88,7 @@ Manual verification needs the target CLI authenticated once by a human. Claude d
 
 ### Source credentials
 
-Credentials are **config-first** ([ADR-0006](docs/adr/0006-sdk-polling-config-first-credentials.md)): each kind reads `~/.amb/<kind>/credentials.json` (mode 0600), never the broker DB.
+Credentials are **config-first**: each kind reads `~/.amb/<kind>/credentials.json` (mode 0600), never the broker DB.
 
 ```bash
 npx amb config init                  # scaffold github|jira|google templates
@@ -127,7 +127,7 @@ npx tsx scripts/e2e-google.mts   # live google sheets feed e2e (needs consent-de
 
 The live harnesses source account-specific values from `.env` or the environment — copy `.env.example` to `.env` and fill in your own. See the [e2e secrets contract](docs/agents/e2e-secrets.md) for keys, CI mapping, and rotation notes.
 
-Design decisions live in [docs/adr/](docs/adr/); the feed abstraction ([ADR-0005](docs/adr/0005-feed-abstraction.md)) is the core model.
+The feed abstraction is the core model: sources poll vendor APIs through injectable SDK runners (never CLI exec), publish typed events to topics, and degrade loud on credential problems.
 
 ## License
 

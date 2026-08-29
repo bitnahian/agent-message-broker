@@ -54,3 +54,9 @@ packages/ui/e2e-coverage/
 .env
 .env.local
 .env.*.local
+
+# internal, skill-derived docs — kept local, not for the public repo
+/CONTEXT.md
+/DESIGN.md
+/PRODUCT.md
+/docs/adr/

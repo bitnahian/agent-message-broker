@@ -25,7 +25,7 @@ All three signal the live process — no headless-resume appends. (Claude/codex 
 | any URL (Slack thread, file, ticket, PR…) | `polled-url` | fetch + ETag/sha256 change detection |
 | GitHub | `github` | octokit SDK poll of `repos/{o}/{r}/events`; feed event-type allowlist |
 | Jira | `jira` | Atlassian REST `rest/api/3/search/jql`; `key@updated` cursor |
-| Google (Pub/Sub) | `google` | googleapis SDK pulls a Pub/Sub subscription via service-account (proven e2e); Sheets/Drive/Docs SDK feed deferred (needs Workspace DWD/OAuth) |
+| Google | `google` | googleapis SDK feed as the logged-in developer (per-developer OAuth loopback → `~/.amb/google/token.json`); reads Drive/Sheets/Docs endpoints (`drive.files.list`, `sheets.spreadsheets.values.get`, …) |
 | generic webhook | `generic-webhook` | optional opt-in tier (ADR-0007): envelope `{type,id,occurredAt,payload}` → `webhook:<type>` |
 
 Webhooks are an **optional opt-in tier** (ADR-0007): polling is the baseline (ADR-0002/0006). The broker can open a shared tunnel (smee default, `127.0.0.1` stays closed) and re-register per-source vendor webhooks (GitHub repo hooks via octokit) against it. Jira-cloud/Google realtime are vendor-gated and stay poll-only.
@@ -47,6 +47,7 @@ CLI (same server, `BROKER_URL`/`BROKER_TOKEN` envs respected):
 
 ```bash
 amb config init            # scaffold ~/.amb/github|jira|google/credentials.json templates
+amb google login --credentials=.secrets/client_secret_2_*.json   # per-dev OAuth: install client, open loopback consent, cache token.json
 amb topics create prs --retain 50
 amb sources create --topic <name|id> --kind github --options '{"repo":"cli/cli"}'
 amb sources start <sourceId>
@@ -55,7 +56,7 @@ amb subscriptions create --topic prs --agent pi --session <sessionId> --template
 amb events list --topic prs
 ```
 
-Credentials are **config-first** (ADR-0006): SDK pollers read `~/.amb/<kind>/credentials.json` (mode 0600) — github `{token}`, jira `{email,apiToken,domain}`, google (standard gcloud shape) a service-account `{client_email,private_key,project_id,type}` or OAuth `{client_id,client_secret,refresh_token,type}`. They never live in the broker DB.
+Credentials are **config-first** (ADR-0006): SDK pollers read `~/.amb/<kind>/credentials.json` (mode 0600) — github `{token}`, jira `{email,apiToken,domain}`, google (standard gcloud shape) a service-account `{client_email,private_key,project_id,type}` or OAuth `{client_id,client_secret,refresh_token,type}`. For the distributed dev use case, **Google is a per-developer OAuth loopback flow**: `amb google login` installs the downloaded OAuth client at `~/.amb/google/credentials.json` (mode 0600), runs the localhost consent handshake (ephemeral port, browser opens, code captured, token exchanged), and caches the refresh/access token at `~/.amb/google/token.json` (mode 0600). The google feed then acts as the logged-in developer, which is what unlocks Drive/Sheets/Docs reads. The service-account/authorized_user shapes still load as a fallback. Credentials never live in the broker DB.
 
 Server env: `BROKER_PORT` (default 4733), `BROKER_DB` (default `broker.db`), `BROKER_TOKEN` (optional; if unset a token is auto-generated at `~/.config/agent-message-broker/token`, mode 0600, and the CLI reads it automatically), `BROKER_UI_DIR`, `BROKER_LOG=1` for request logs. The server binds 127.0.0.1 only; the bearer token blocks other local processes and web pages you visit from driving the broker.
 

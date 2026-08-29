@@ -60,3 +60,6 @@ packages/ui/e2e-coverage/
 /DESIGN.md
 /PRODUCT.md
 /docs/adr/
+/AGENTS.md
+/.impeccable/
+/docs/

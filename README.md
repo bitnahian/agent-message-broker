@@ -112,7 +112,7 @@ npx amb google login --credentials=<downloaded-oauth-client.json>
 
 - The server binds **127.0.0.1 only**; the bearer token blocks other local processes (and web pages you visit) from driving the broker.
 - Credential files live on disk at `~/.amb/<kind>/credentials.json`, mode 0600, verified by the loader (world-readable files are rejected). They never enter the broker DB or `Source.options`.
-- The live e2e harnesses stage credentials into ephemeral temp homes that are deleted on exit — tests never read your real `~/.amb` (see the [e2e secrets contract](docs/agents/e2e-secrets.md)).
+- The live e2e harnesses stage credentials into ephemeral temp homes that are deleted on exit — tests never read your real `~/.amb`.
 
 ## Development
 
@@ -125,7 +125,7 @@ npx tsx scripts/e2e-feeds.mts    # live github+jira feed e2e (needs E2E_* env)
 npx tsx scripts/e2e-google.mts   # live google sheets feed e2e (needs consent-derived token)
 ```
 
-The live harnesses source account-specific values from `.env` or the environment — copy `.env.example` to `.env` and fill in your own. See the [e2e secrets contract](docs/agents/e2e-secrets.md) for keys, CI mapping, and rotation notes.
+The live harnesses source account-specific values from `.env` or the environment — copy `.env.example` to `.env` and fill in your own (each key is commented; CI maps the same names to its secret store).
 
 The feed abstraction is the core model: sources poll vendor APIs through injectable SDK runners (never CLI exec), publish typed events to topics, and degrade loud on credential problems.
 

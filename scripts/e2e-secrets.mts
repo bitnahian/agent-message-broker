@@ -6,8 +6,7 @@
  *   2. repo-root `.env` (gitignored; local fallback, KEY=VALUE lines)
  *
  * Personal identifiers (emails, domains, projects) and secrets NEVER live in
- * harness code or committed files. See `.env.example` for the full key list
- * and `docs/agents/e2e-secrets.md` for the contract.
+ * harness code or committed files. See `.env.example` for the full key list.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";

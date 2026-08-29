@@ -5,13 +5,14 @@
  *
  * Run: npx tsx scripts/e2e-feeds.mts
  * Requires: valid creds in .secrets/{GITHUB_PAT_TOKEN,ATLASSIAN_API_TOKEN} and
- *            acli auth (bitnahian.atlassian.net). Creates + deletes a throwaway
+ *            acli auth (E2E_JIRA_DOMAIN). Creates + deletes a throwaway
  *            private GitHub repo and a scratch Jira work item.
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { seedGithubRepo, seedJiraTicket, scaffoldAmHome, spawnServer, waitHealthy, sleep, secret } from "./feed-e2e-lib.mts";
+import { seedGithubRepo, seedJiraTicket, scaffoldAmHome, spawnServer, waitHealthy, sleep } from "./feed-e2e-lib.mts";
+import { e2eSecret } from "./e2e-secrets.mts";
 
 const PORT = Number(process.env.E2E_PORT ?? (5830 + Math.floor(Math.random() * 400)));
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -53,7 +54,7 @@ try {
   scaffoldAmHome(AMB_HOME);
 
   // ---- seed real github repo + jira ticket ----
-  const gh = await seedGithubRepo(secret("GITHUB_PAT_TOKEN"));
+  const gh = await seedGithubRepo(e2eSecret("E2E_GITHUB_TOKEN"));
   ghCleanup = gh.cleanup;
   console.log("seeded github repo:", gh.repo);
   const jira = await seedJiraTicket();

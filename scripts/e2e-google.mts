@@ -5,16 +5,17 @@
  * spreadsheet. Never touches the user's :4733 broker (ephemeral port + in-mem).
  *
  * Run: ./node_modules/.bin/tsx scripts/e2e-google.mts
- * Requires (one-time, per developer):
- *   ./node_modules/.bin/tsx scripts/e2e-google.mts  -- first run `amb google login
- *       --credentials=.secrets/client_secret_2_*.json` to cache the token, OR
- *   - `~/.amb/google/token.json` (from `amb google login`) and
- *   - the OAuth client in `.secrets/client_secret_2_*.json` (or `~/.amb/google/credentials.json`).
+ * Requires (per docs/agents/e2e-secrets.md):
+ *   - the per-developer token (one-time `amb google login` caches ~/.amb/google/token.json,
+ *     or export E2E_GOOGLE_TOKEN_JSON with the token.json contents), and
+ *   - the OAuth client (export E2E_GOOGLE_CLIENT_JSON, or .secrets/google-oauth-client.json).
  */
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { e2eSecretOptional } from "./e2e-secrets.mts";
 
 const REPO_ROOT = new URL("..", import.meta.url).pathname;
 const PORT = Number(process.env.E2E_PORT ?? (5940 + Math.floor(Math.random() * 600)));
@@ -32,30 +33,37 @@ async function waitFor<T>(fn: () => Promise<T>, pred: (v: T) => boolean, what: s
 
 let server: any = null;
 let spreadsheetId: string | null = null;
+
+/** Google OAuth client JSON: env secret first, then the stable-name local file. */
+function googleClientJson(): string {
+  const fromEnv = e2eSecretOptional("E2E_GOOGLE_CLIENT_JSON");
+  if (fromEnv) return fromEnv;
+  const stableFile = join(REPO_ROOT, ".secrets", "google-oauth-client.json");
+  if (moduleExists(stableFile)) return readFileSync(stableFile, "utf8");
+  throw new Error(
+    "google OAuth client not found — export E2E_GOOGLE_CLIENT_JSON or copy the downloaded client to .secrets/google-oauth-client.json",
+  );
+}
+
+/** Cached per-developer token JSON: env secret first, then the logged-in dev's ~/.amb. */
+function googleTokenJson(): string {
+  const fromEnv = e2eSecretOptional("E2E_GOOGLE_TOKEN_JSON");
+  if (fromEnv) return fromEnv;
+  const homeToken = join(homedir(), ".amb", "google", "token.json");
+  if (moduleExists(homeToken)) return readFileSync(homeToken, "utf8");
+  throw new Error(
+    "google OAuth token not found — run 'amb google login' once (caches ~/.amb/google/token.json), " +
+    "or export E2E_GOOGLE_TOKEN_JSON with the full token.json contents",
+  );
+}
+
 try {
-  // ---- 0) gather the developer OAuth client + token, stage an ephemeral AMB_HOME ----
-  const homeGoogleDir = join(process.env.HOME ?? "", ".amb", "google");
-  const homeCreds = join(homeGoogleDir, "credentials.json");
-  const homeToken = join(homeGoogleDir, "token.json");
-  const secretClients = ["client_secret_2_642510813598-gfqnhnvulnvu93h2bngoubadet9c4988.apps.googleusercontent.com.json"];
-
-  const clientSource = (() => {
-    for (const f of secretClients) { const p = join(REPO_ROOT, ".secrets", f); if (moduleExists(p)) return p; }
-    if (moduleExists(homeCreds)) return homeCreds;
-    return null;
-  })();
-  if (!clientSource) throw new Error("google OAuth client not found: copy .secrets/client_secret_2_*.json or run 'amb config init' + 'amb google login'");
-  if (!moduleExists(homeToken)) {
-    throw new Error(
-      "google OAuth token.json not found at " + homeToken + "\n" +
-      "  Run the loopback login once: ./node_modules/.bin/tsx packages/cli/src/index.ts google login --credentials=.secrets/client_secret_2_*.json\n" +
-      "  (or place credentials.json + token.json under ~/.amb/google/).",
-    );
-  }
-
+  // ---- 0) stage an ephemeral AMB_HOME with the developer OAuth client + token ----
+  const clientJson = googleClientJson();
+  const tokenJson = googleTokenJson();
   mkdirSync(join(AMB_HOME, "google"), { recursive: true, mode: 0o700 });
-  writeFileSync(join(AMB_HOME, "google", "credentials.json"), readFileSync(clientSource), { mode: 0o600 });
-  writeFileSync(join(AMB_HOME, "google", "token.json"), readFileSync(homeToken), { mode: 0o600 });
+  writeFileSync(join(AMB_HOME, "google", "credentials.json"), clientJson, { mode: 0o600 });
+  writeFileSync(join(AMB_HOME, "google", "token.json"), tokenJson, { mode: 0o600 });
 
   // ---- 1) create + seed a scratch spreadsheet as the logged-in developer ----
   process.env.AMB_HOME = AMB_HOME;

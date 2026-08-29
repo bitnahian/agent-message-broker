@@ -50,3 +50,7 @@ coverage/
 packages/ui/e2e-coverage/
 
 .secrets/*
+# local env files (secrets for e2e / local runs)
+.env
+.env.local
+.env.*.local

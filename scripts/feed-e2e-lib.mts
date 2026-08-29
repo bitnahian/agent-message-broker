@@ -8,27 +8,23 @@
  *
  * Run standalone:  npx tsx scripts/e2e-feeds.mts
  */
-import { mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { e2eEnvWithDefault, e2eSecret } from "./e2e-secrets.mts";
 
 const REPO_ROOT = new URL("..", import.meta.url).pathname;
 
-/** Read a .secrets/<name> value. */
-export function secret(name: string): string {
-  return readFileSync(join(REPO_ROOT, ".secrets", name), "utf8").trim();
-}
-
-/** Scaffold `~/.amb` (temp AMB_HOME) with credential files for the SDK pollers. */
+/** Scaffold a temp AMB_HOME with credential files for the SDK pollers. */
 export function scaffoldAmHome(base: string): void {
   mkdirSync(join(base, "github"), { recursive: true, mode: 0o700 });
   mkdirSync(join(base, "jira"), { recursive: true, mode: 0o700 });
-  writeFileSync(join(base, "github", "credentials.json"), JSON.stringify({ token: secret("GITHUB_PAT_TOKEN") }, null, 2), { mode: 0o600 });
+  writeFileSync(join(base, "github", "credentials.json"), JSON.stringify({ token: e2eSecret("E2E_GITHUB_TOKEN") }, null, 2), { mode: 0o600 });
   writeFileSync(join(base, "jira", "credentials.json"), JSON.stringify({
-    email: "nahian97@gmail.com",
-    apiToken: secret("ATLASSIAN_API_TOKEN"),
-    domain: "bitnahian.atlassian.net",
+    email: e2eSecret("E2E_JIRA_EMAIL"),
+    apiToken: e2eSecret("E2E_JIRA_API_TOKEN"),
+    domain: e2eSecret("E2E_JIRA_DOMAIN"),
   }, null, 2), { mode: 0o600 });
 }
 
@@ -53,8 +49,9 @@ export async function seedGithubRepo(token: string): Promise<SeedGithub> {
   const { Octokit } = await import("octokit");
   const api = new Octokit({ auth: token });
   const me = (await api.rest.users.getAuthenticated()).data.login;
+  const cfg = e2eEnvWithDefault("E2E_GITHUB_REPO_PREFIX", "amb-e2e-");
   const stamp = Date.now();
-  const name = `amb-e2e-${stamp}`;
+  const name = `${cfg}${stamp}`;
   await api.rest.repos.createForAuthenticatedUser({ name, private: true, auto_init: true, description: "amb feed e2e seed" });
 
   // create an issue
@@ -88,14 +85,15 @@ export interface SeedJira {
   cleanup: () => Promise<void>;
 }
 
-/** Seed a scratch Jira work item in the KAN project; returns a JQL that matches it plus cleanup. */
+/** Seed a scratch Jira work item in the configured sandbox project; returns a JQL that matches it plus cleanup. */
 export async function seedJiraTicket(): Promise<SeedJira> {
   const { createWorkItem, deleteWorkItem } = await import("./feed-e2e-acli.mts");
+  const project = e2eSecret("E2E_JIRA_PROJECT");
   const stamp = Date.now();
   const summary = `amb e2e seed ticket ${stamp}`;
-  const key = await createWorkItem("KAN", summary);
+  const key = await createWorkItem(project, summary);
   return {
-    jql: `project = KAN AND summary ~ "amb e2e seed ticket ${stamp}"`,
+    jql: `project = ${project} AND summary ~ "amb e2e seed ticket ${stamp}"`,
     key,
     cleanup: async () => {
       try { await deleteWorkItem(key); } catch { /* ignore */ }

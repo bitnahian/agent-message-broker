@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import net from "node:net";
+import { spawn } from "node:child_process";
 import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it } from "vitest";
 import { createMessageReader, writeMessage } from "./framing.js";
 import { PiAdapter } from "./index.js";
@@ -58,7 +59,7 @@ describe("framing (pi-intercom wire format)", () => {
 });
 
 /** Minimal fake pi-intercom broker for protocol-level tests. */
-function startFakeBroker(socketPath: string) {
+function startFakeBroker(socketPath: string, sessions?: Array<{ id: string; name: string; pid: number }>) {
   const received: unknown[] = [];
   const server = net.createServer((socket) => {
     socket.on("data", createMessageReader((raw) => {
@@ -70,7 +71,7 @@ function startFakeBroker(socketPath: string) {
         writeMessage(socket, {
           type: "sessions",
           requestId: msg.requestId,
-          sessions: [
+          sessions: sessions ?? [
             { id: "fake-client-id", name: "amb-broker", cwd: "/x", model: "none", pid: 1, startedAt: 1, lastActivity: 1 },
             { id: "s-abc", name: "worker", cwd: "/proj", model: "claude", pid: 2, startedAt: 1, lastActivity: 1 },
           ],
@@ -85,6 +86,33 @@ function startFakeBroker(socketPath: string) {
     server.listen(socketPath, () => resolve({ server, received }));
   });
 }
+
+describe("PiAdapter inactive-session filtering", () => {
+  it("hides dead-pid sessions and foreign amb-broker registrations", async () => {
+    // a guaranteed-dead pid: spawn a child that exits immediately
+    const dying = spawn("true");
+    await new Promise((r) => dying.on("exit", r));
+    const dir = mkdtempSync(join(tmpdir(), "amb-pi-inactive-"));
+    const broker = await startFakeBroker(join(dir, "broker.sock"), [
+      { id: "fake-client-id", name: "amb-broker", pid: process.pid },          // own synthetic -> excluded by id
+      { id: "stale-broker", name: "amb-broker", pid: process.pid },            // another broker's registration -> excluded by name
+      { id: "dead-worker", name: "gone", pid: dying.pid },                     // dead process -> inactive
+      { id: "live-worker", name: "active", pid: process.pid },                 // alive -> kept
+    ]);
+    const adapter = new PiAdapter({ socketPath: join(dir, "broker.sock"), timeoutMs: 2000 });
+    try {
+      const sessions = await adapter.listSessions();
+      expect(sessions).toEqual([{ agent: "pi", sessionId: "live-worker", label: "active" }]);
+      // isSessionActive agrees with the list
+      expect(await adapter.isSessionActive({ agent: "pi", sessionId: "live-worker" })).toBe(true);
+      expect(await adapter.isSessionActive({ agent: "pi", sessionId: "dead-worker" })).toBe(false);
+    } finally {
+      await adapter.close();
+      broker.server.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("PiAdapter (fake intercom broker)", () => {
   let dir: string;

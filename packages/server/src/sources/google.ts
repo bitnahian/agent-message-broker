@@ -31,7 +31,17 @@ export function splitApi(api: string): { service: string; resourcePath: string[]
   return { service: parts[0], resourcePath: parts.slice(1, -1), method: parts[parts.length - 1] };
 }
 
-const VERSIONS: Record<string, string> = { drive: "v3", sheets: "v4", gmail: "v1", calendar: "v3", pubsub: "v1" };
+const VERSIONS: Record<string, string> = { drive: "v3", sheets: "v4", docs: "v1", gmail: "v1", calendar: "v3", pubsub: "v1" };
+
+/** Load a cached OAuth2Client from ~/.amb/google/token.json, or null. */
+async function loadOAuthFrom(base?: string): Promise<unknown> {
+  const { cachedGoogleClient } = await import("./google-auth.js");
+  try {
+    return cachedGoogleClient(base);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Build the default googleapis-based runner from `~/.amb/google/credentials.json`.
@@ -41,16 +51,21 @@ const VERSIONS: Record<string, string> = { drive: "v3", sheets: "v4", gmail: "v1
  */
 export async function buildGoogleApi(base?: string): Promise<GoogleApiRunner> {
   const { google } = await import("googleapis");
-  const creds = loadCredentials("google", base) as GoogleCredentials;
-  let auth: unknown;
-  if (creds.type === "service_account" || creds.private_key) {
-    const { JWT } = await import("google-auth-library");
-    auth = new JWT({ email: creds.client_email!, key: creds.private_key!, scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
-  } else {
-    const { OAuth2Client } = await import("google-auth-library");
-    const oauth = new OAuth2Client({ clientId: creds.client_id, clientSecret: creds.client_secret });
-    oauth.setCredentials({ refresh_token: creds.refresh_token });
-    auth = oauth;
+  // Per-developer OAuth token (distributed-tool pattern): reuse a cached
+  // token.json OAuth2Client when present so the google feed acts as the
+  // logged-in developer (needed for Drive/Sheets/Docs).
+  let auth: unknown = await loadOAuthFrom(base);
+  if (!auth) {
+    const creds = loadCredentials("google", base) as GoogleCredentials;
+    if (creds.type === "service_account" || creds.private_key) {
+      const { JWT } = await import("google-auth-library");
+      auth = new JWT({ email: creds.client_email!, key: creds.private_key!, scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
+    } else {
+      const { OAuth2Client } = await import("google-auth-library");
+      const oauth = new OAuth2Client({ clientId: creds.client_id, clientSecret: creds.client_secret });
+      oauth.setCredentials({ refresh_token: creds.refresh_token });
+      auth = oauth;
+    }
   }
 
   const clientCache = new Map<string, unknown>();
@@ -139,12 +154,20 @@ export class GoogleSource extends Poller {
   }
 }
 
-/** Resolve a possibly-dotted path (`a.b.c`) against an object. */
+/**
+ * Resolve a possibly-dotted path (`a.b.c`) against an object. Sheet row arrays
+ * are supported via a numeric index path (e.g. idField "0" keys on the first
+ * cell) so `sheets.spreadsheets.values.get` rows work as feed items.
+ */
 function dig(obj: unknown, path: string): unknown {
   let cur: unknown = obj as Record<string, unknown> & { [k: string]: unknown };
   for (const seg of path.split(".")) {
     if (cur == null || typeof cur !== "object") return undefined;
-    cur = (cur as Record<string, unknown>)[seg];
+    if (Array.isArray(cur) && /^\d+$/.test(seg)) {
+      cur = cur[Number(seg)];
+    } else {
+      cur = (cur as Record<string, unknown>)[seg];
+    }
   }
   return cur;
 }

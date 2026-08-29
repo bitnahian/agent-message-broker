@@ -87,4 +87,27 @@ describe("GoogleSource (SDK poller)", () => {
     expect((store.listEvents()[0]?.payload as { id: string }).id).toBe("m1");
     expect(await src.tick()).toBe(0); // same messageId deduped
   });
+
+  it("keys sheet rows by a numeric cell index (sheets.spreadsheets.values.get)", async () => {
+    const { store, src } = setup(
+      fakeRunner({ values: [["row-a", "x1"], ["row-b", "x2"]] }),
+      { api: "sheets.spreadsheets.values.get", itemsPath: "values", idField: "0" },
+    );
+    expect(await src.tick()).toBe(2);
+    const kinds = store.listEvents().map((e) => e.kind).sort();
+    expect(kinds).toEqual(["gws:sheets:new", "gws:sheets:new"]);
+    const ids = store.listEvents().map((e) => (e.payload as { id: string }).id).sort();
+    expect(ids).toEqual(["row-a", "row-b"]);
+    expect(await src.tick()).toBe(0); // deduped on first-cell identity
+  });
+
+  it("re-emits a sheet row when its fingerprint cell changes", async () => {
+    let data = { values: [["row-a", "v1"]] };
+    const { store, src } = setup(() => data, { api: "sheets.spreadsheets.values.get", itemsPath: "values", idField: "0", fingerprintField: "1" });
+    expect(await src.tick()).toBe(1);
+    expect(store.listEvents()[0]?.kind).toBe("gws:sheets:changed");
+    data = { values: [["row-a", "v2"]] };
+    expect(await src.tick()).toBe(1);
+    expect(store.listEvents()).toHaveLength(2);
+  });
 });

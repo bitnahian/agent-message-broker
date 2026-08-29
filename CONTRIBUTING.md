@@ -9,7 +9,7 @@ npm install          # Node >= 22.5 (uses node's built-in SQLite)
 npm run verify       # build + test all 7 workspace projects
 ```
 
-Copy `.env.example` to `.env` if you want to run the live e2e harnesses against your own vendor accounts — see [docs/agents/e2e-secrets.md](docs/agents/e2e-secrets.md) for the key contract. Never commit `.env`, `.secrets/`, or any credential material.
+Copy `.env.example` to `.env` if you want to run the live e2e harnesses against your own vendor accounts (every key is documented there). Never commit `.env`, `.secrets/`, or any credential material.
 
 ## Ground rules
 

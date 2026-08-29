@@ -5,7 +5,7 @@
  * spreadsheet. Never touches the user's :4733 broker (ephemeral port + in-mem).
  *
  * Run: ./node_modules/.bin/tsx scripts/e2e-google.mts
- * Requires (per docs/agents/e2e-secrets.md):
+ * Requires (see .env.example for the key contract):
  *   - the per-developer token (one-time `amb google login` caches ~/.amb/google/token.json,
  *     or export E2E_GOOGLE_TOKEN_JSON with the token.json contents), and
  *   - the OAuth client (export E2E_GOOGLE_CLIENT_JSON, or .secrets/google-oauth-client.json).

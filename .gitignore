@@ -25,6 +25,7 @@ playwright-report/
 # generated npm-package artifacts (rebuilt by packages/agent-message-broker/build.mjs)
 packages/agent-message-broker/dist/
 packages/agent-message-broker/ui/
+*.tgz
 
 # local agent skill installs
 .dsh/

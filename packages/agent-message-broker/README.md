@@ -22,6 +22,8 @@ npx agent-message-broker subscriptions create --topic prs --agent pi --session <
 
 Events now push into the live agent session. The UI at http://127.0.0.1:4733 is for live viewing, orchestrating and following event flow; the `amb` CLI can do everything, so agents can wire subscriptions themselves.
 
+Data lives in `~/.amb/broker.db` by default (override with `BROKER_DB`); an existing `./broker.db` in the launch directory is preferred for back-compat. Credentials live under `~/.amb/` too.
+
 Optional: Google Workspace sources need the (large) `googleapis` package — `npm install -g googleapis` alongside the broker.
 
 See the [GitHub repo](https://github.com/bitnahian/agent-message-broker) for the full docs, source layout, and how it works.

@@ -60,4 +60,29 @@ CREATE TABLE IF NOT EXISTS deliveries (
 CREATE INDEX IF NOT EXISTS idx_deliveries_event ON deliveries(eventId);
 CREATE INDEX IF NOT EXISTS idx_deliveries_sub ON deliveries(subscriptionId);
 `);
+  migrateGwsToGoogle(db);
+}
+
+/**
+ * Data migration: `gws` sources (shelling out to the gws CLI) move to the
+ * googleapis-backed `google` kind (ADR-0006). Options translate 1:1:
+ * `command: ["drive","files","list"]` becomes `api: "drive.files.list"`;
+ * params/itemsPath/idField/fingerprintField/intervalMs carry over as-is.
+ * Emitted event kinds stay `gws:<service>:<new|changed>`, so subscriptions
+ * and templates are unaffected.
+ */
+function migrateGwsToGoogle(db: Db): void {
+  const rows = db.prepare("SELECT id, options FROM sources WHERE kind = 'gws'").all() as { id: string; options: string }[];
+  for (const row of rows) {
+    try {
+      const o = JSON.parse(row.options) as Record<string, unknown>;
+      if (Array.isArray(o.command)) {
+        o.api = o.command.join(".");
+        delete o.command;
+      }
+      db.prepare("UPDATE sources SET kind = 'google', options = ? WHERE id = ?").run(JSON.stringify(o), row.id);
+    } catch {
+      // malformed options JSON: leave the row untouched rather than guess
+    }
+  }
 }

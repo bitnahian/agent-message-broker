@@ -83,7 +83,7 @@ export function buildApp(opts: AppOptions): FastifyInstance {
     "polled-url": ["url"],
     github: [],
     jira: ["jql"],
-    gws: ["command", "itemsPath"],
+    google: ["api", "itemsPath"],
   };
 
   app.post("/sources", async (req, reply) => {

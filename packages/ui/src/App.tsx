@@ -19,12 +19,12 @@ const AGENT_COLORS: Record<string, string> = {
   codex: "bg-purple-500/10 text-purple-400 border border-purple-500/30",
 };
 const AGENT_NAMES: Record<string, string> = { pi: "pi", claude: "Claude", codex: "Codex" };
-const KIND_LABELS: Record<string, string> = { "polled-url": "Polled URL", github: "GitHub", jira: "Jira", gws: "Google Workspace" };
+const KIND_LABELS: Record<string, string> = { "polled-url": "Polled URL", github: "GitHub", jira: "Jira", google: "Google Workspace" };
 const KIND_EXAMPLES: Record<string, string> = {
   "polled-url": '{"url": "https://example.com/file.txt", "intervalMs": 30000}',
   github: '{"repo": "owner/repo", "intervalMs": 60000}',
   jira: '{"jql": "project = KAN ORDER BY updated DESC", "intervalMs": 120000}',
-  gws: '{"command": ["gmail","users","messages","list"], "params": {"userId":"me"}, "itemsPath": "messages"}',
+  google: '{"api": "drive.files.list", "params": {"q": "trashed = false", "pageSize": 10}, "itemsPath": "files", "fingerprintField": "modifiedTime"}',
 };
 
 // ── Toast system ──
@@ -237,7 +237,7 @@ function TopicSources({ topic, sources, refresh }: { topic: Topic; sources: Sour
         <summary className="cursor-pointer text-sm text-zinc-400 hover:text-zinc-300 underline underline-offset-2 decoration-zinc-700 transition-colors">Add source</summary>
         <div className="mt-3 p-4 border border-zinc-800 rounded-lg bg-zinc-900/50 space-y-3">
           <select className={inputCls} value={kind} onChange={(e) => { setKind(e.target.value); setOptions(KIND_EXAMPLES[e.target.value] ?? "{}"); }}>
-            <option value="polled-url">Polled URL</option><option value="github">GitHub</option><option value="jira">Jira</option><option value="gws">Google Workspace</option>
+            <option value="polled-url">Polled URL</option><option value="github">GitHub</option><option value="jira">Jira</option><option value="google">Google Workspace</option>
           </select>
           <textarea className={`${inputCls} h-24 font-mono text-sm`} value={options} onChange={(e) => setOptions(e.target.value)} />
           <button className={btnCls} disabled={creating} onClick={handleCreate}>{creating ? "Creating..." : "Create source"}</button>

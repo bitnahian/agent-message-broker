@@ -22,7 +22,7 @@ export interface Topic {
 export interface EventSourceConfig {
   id: string;
   topicId: string;
-  kind: string; // e.g. "polled-url", "github", "jira", "gws", "generic-webhook"
+  kind: string; // e.g. "polled-url", "github", "jira", "google", "generic-webhook"
   /** kind-specific options (JSON). Holds non-secret config; credentials never live here. */
   options: Record<string, unknown>;
   enabled: boolean;

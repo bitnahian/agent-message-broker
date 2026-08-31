@@ -43,10 +43,11 @@ describe("SseHub", () => {
     expect(hub.subscriberCount()).toBe(0);
   });
 
-  it("formatSse emits id/event/data framing", () => {
+  it("formatSse emits id/data framing (unnamed message events)", () => {
     const s = formatSse(ev("id-1", "t"));
     expect(s).toContain("id: id-1\n");
-    expect(s).toContain("event: k\n");
+    // named events never dispatch to onmessage; the kind travels in data.kind
+    expect(s).not.toContain("event:");
     expect(s).toContain(`data: ${JSON.stringify(ev("id-1", "t"))}\n\n`);
   });
 });

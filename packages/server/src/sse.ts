@@ -31,6 +31,12 @@ export class SseHub {
   }
 }
 
+/**
+ * Frame an event as a default (unnamed) SSE message. The `event:` line is
+ * deliberately omitted: named events don't dispatch to `onmessage`, which is
+ * what the UI live feed (and the Last-Event-ID replay) listens on. The kind
+ * rides in the JSON payload as `kind`.
+ */
 export function formatSse(event: BrokerEvent): string {
-  return `id: ${event.id}\nevent: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`;
+  return `id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`;
 }

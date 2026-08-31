@@ -1,6 +1,6 @@
 {
   "name": "agent-message-broker",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A local message broker for coding agents. Wire event sources (GitHub, Jira, Google Workspace, polled URLs, webhooks) to topics and push events into live coding-agent sessions (pi, Claude Code, Codex).",
   "type": "module",
   "license": "MIT",
@@ -25,7 +25,8 @@
   },
   "bin": {
     "amb": "bin/amb.js",
-    "amb-server": "bin/amb-server.js"
+    "amb-server": "bin/amb-server.js",
+    "agent-message-broker": "bin/agent-message-broker.js"
   },
   "files": [
     "bin/",

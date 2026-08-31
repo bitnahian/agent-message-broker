@@ -10,13 +10,22 @@ Coding agents are batch processes: you prompt, they run, they stop. But most of 
 
 Prerequisites: **Node ≥ 22.5** (the broker uses node's built-in SQLite) and git.
 
+The easiest way to run the broker is the published npm package:
+
+```bash
+npx agent-message-broker          # broker + UI + API at http://127.0.0.1:4733
+# or: npm install -g agent-message-broker, then use the `amb` command
+```
+
+To run from source instead:
+
 ```bash
 npm install
 npm run build              # build all workspace packages (incl. the UI)
 npm run start              # broker + UI + API at http://127.0.0.1:4733
 ```
 
-The CLI ships as the `amb` bin of the `@amb/cli` workspace — use `npx amb` (or `npm link` in `packages/cli` to get a global `amb`). All commands below work against the running broker.
+All commands below use `amb` (substitute `npx agent-message-broker` if you prefer zero-install).
 
 See an event flow end to end:
 
@@ -39,6 +48,70 @@ Verify an offline pass of the whole system (server + CLI + UI + retention, no ex
 ```bash
 npm run e2e
 ```
+
+## Recipes: agent-reacts-to-events wiring
+
+The demo flow (ticket moves to In Progress → implementation spec lands in a Google Doc → agent implements → another agent reviews the PR) is just three topics wired to three sources. Copy-paste per recipe; every source needs `sources start <sourceId>` after create.
+
+### 1. Jira: ticket pushed to In Progress
+
+Needs `~/.amb/jira/credentials.json` (`amb config init --kind jira` scaffolds it).
+
+```bash
+amb topics create jira --retain 100
+amb sources create --topic jira --kind jira --options '{
+  "jql": "status CHANGED TO \"In Progress\" AFTER -30d ORDER BY updated DESC",
+  "intervalMs": 120000
+}'
+```
+
+Emits `jira:workitem-updated` with `{key, summary, status, assignee, issueType, updated}`. The `AFTER -30d` bound is required: Atlassian rejects unbounded JQL on this endpoint.
+
+### 2. Google Doc: implementation spec updated
+
+Needs the Google OAuth login (`amb google login`).
+
+```bash
+amb topics create doc --retain 100
+amb sources create --topic doc --kind google --options '{
+  "api": "drive.files.list",
+  "params": {
+    "q": "name = \"Implementation Plan\" and trashed = false",
+    "fields": "files(id,name,modifiedTime)"
+  },
+  "itemsPath": "files",
+  "fingerprintField": "modifiedTime",
+  "intervalMs": 120000
+}'
+```
+
+Emits `gws:drive:changed` once per edit (the dedupe key includes `modifiedTime`). Drive's search language can't filter by file id, so match by name.
+
+### 3. GitHub: PR opened, for a reviewer agent
+
+Needs `~/.amb/github/credentials.json` (`amb config init --kind github`).
+
+```bash
+amb topics create prs --retain 100
+amb sources create --topic prs --kind github --options '{
+  "repo": "owner/repo",
+  "eventTypes": ["PullRequestEvent"],
+  "intervalMs": 60000
+}'
+```
+
+Emits `github:PullRequestEvent` with `{repo, actor, summary}` covering opened/closed/merged/synchronize.
+
+### 4. Subscribe the live sessions
+
+```bash
+amb sessions                                        # discover running agent sessions
+amb subscriptions create --topic jira --agent pi --session <sessionId> --template "Ticket event: {{kind}}\n{{payload}}"
+amb subscriptions create --topic doc --agent pi --session <sessionId> --template "Spec updated: {{kind}}\n{{payload}}"
+amb subscriptions create --topic prs --agent claude --session <sessionId> --template "Review request: {{kind}}\n{{payload}}"
+```
+
+Templates support `{{kind}}` and `{{payload}}` (pretty-printed JSON); omit `--template` for a sensible default. Events push into the live session — the agent reacts mid-conversation.
 
 ## How it works
 
@@ -79,12 +152,12 @@ Manual verification needs the target CLI authenticated once by a human. Claude d
 | Variable | Default | Purpose |
 |---|---|---|
 | `BROKER_PORT` | `4733` | HTTP port |
-| `BROKER_DB` | `broker.db` | SQLite path (`:memory:` for ephemeral) |
+| `BROKER_DB` | `~/.amb/broker.db`¹ | SQLite path (`:memory:` for ephemeral) |
 | `BROKER_TOKEN` | auto-generated¹ | bearer token for the API |
 | `BROKER_UI_DIR` | packaged UI | serve a different UI build |
 | `BROKER_LOG` | off | `1` enables request logs |
 
-¹ Auto-generated at `~/.config/agent-message-broker/token` (mode 0600); the CLI reads it automatically.
+¹ Auto-generated at `~/.config/agent-message-broker/token` (mode 0600); the CLI reads it automatically. `BROKER_DB` resolves in order: explicit option → `$BROKER_DB` → existing `./broker.db` (dev/back-compat) → `~/.amb/broker.db` (honoring `$AMB_HOME`).
 
 ### Source credentials
 

@@ -1,0 +1,64 @@
+{
+  "name": "agent-message-broker",
+  "version": "0.1.0",
+  "description": "A local message broker for coding agents. Wire event sources (GitHub, Jira, Google Workspace, polled URLs, webhooks) to topics and push events into live coding-agent sessions (pi, Claude Code, Codex).",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bitnahian/agent-message-broker.git"
+  },
+  "keywords": [
+    "coding-agent",
+    "claude-code",
+    "claude",
+    "codex",
+    "jira",
+    "github",
+    "message-broker",
+    "agent",
+    "ai",
+    "llm"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "bin": {
+    "amb": "bin/amb.js",
+    "amb-server": "bin/amb-server.js"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "ui/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node -e \"console.log('no tests: packaging project')\"",
+    "prepack": "npm run build"
+  },
+  "implicitDependencies": [
+    "@amb/cli",
+    "@amb/server",
+    "@amb/ui"
+  ],
+  "devDependencies": {
+    "esbuild": "^0.25.12"
+  },
+  "dependencies": {
+    "@fastify/static": "^8.1.0",
+    "commander": "^13.1.0",
+    "fastify": "^5.2.0",
+    "google-auth-library": "^10.9.1",
+    "octokit": "^5.0.5"
+  },
+  "peerDependencies": {
+    "googleapis": ">=140.0.0"
+  },
+  "peerDependenciesMeta": {
+    "googleapis": {
+      "optional": true
+    }
+  }
+}

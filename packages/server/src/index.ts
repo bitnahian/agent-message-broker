@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { ClaudeAdapter } from "@amb/adapter-claude";
 import { CodexAdapter } from "@amb/adapter-codex";
@@ -16,6 +17,21 @@ export interface BootstrapOptions {
 }
 
 /**
+ * Resolve the UI static dir: explicit option, then env, then the first
+ * existing candidate. Covers the repo layout (`packages/ui/dist`, used by dev
+ * and the compiled server) and the npm package layout (`<pkg>/ui`, copied in
+ * at package-build time next to the bundled `dist/server.js`).
+ */
+export function resolveUiDir(explicit?: string): string {
+  const candidates = [
+    explicit ?? process.env.BROKER_UI_DIR,
+    new URL("../../ui/dist", import.meta.url).pathname,
+    new URL("../ui", import.meta.url).pathname,
+  ].filter((c): c is string => Boolean(c));
+  return candidates.find((c) => existsSync(c)) ?? candidates[0];
+}
+
+/**
  * Start the broker: build state, register adapter/builtin sources, reconcile
  * the outbox, and begin listening. Returns the running app (for tests) and is
  * also the direct-run entry point when executed as a CLI script.
@@ -24,7 +40,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ReturnType
   const dbPath = opts.dbPath ?? process.env.BROKER_DB ?? "broker.db";
   const port = opts.port ?? Number(process.env.BROKER_PORT ?? 4733);
   const token = opts.token ?? ensureToken(process.env.BROKER_TOKEN || undefined);
-  const uiDir = opts.uiDir ?? process.env.BROKER_UI_DIR ?? new URL("../../ui/dist", import.meta.url).pathname;
+  const uiDir = resolveUiDir(opts.uiDir);
 
   const store = new BrokerStore(createDb(dbPath));
   const app = buildApp({ store, token, uiDir });

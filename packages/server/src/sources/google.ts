@@ -50,7 +50,12 @@ async function loadOAuthFrom(base?: string): Promise<unknown> {
  * via the service factory (e.g. drive({version:"v3"}).files.list).
  */
 export async function buildGoogleApi(base?: string): Promise<GoogleApiRunner> {
-  const { google } = await import("googleapis");
+  // googleapis is an optional peer dep (large install); fail loud with the fix.
+  const mod = await import("googleapis").catch(() => null);
+  if (!mod) {
+    throw new Error("googleapis is not installed. Google Workspace sources need it: npm install googleapis");
+  }
+  const { google } = mod;
   // Per-developer OAuth token (distributed-tool pattern): reuse a cached
   // token.json OAuth2Client when present so the google feed acts as the
   // logged-in developer (needed for Drive/Sheets/Docs).

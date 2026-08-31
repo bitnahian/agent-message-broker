@@ -55,6 +55,9 @@ packages/ui/e2e-coverage/
 .env.local
 .env.*.local
 
+# local issue-tracker scratch (per-issue markdown, not project artifacts)
+.scratch/
+
 # internal, skill-derived docs — kept local, not for the public repo
 /CONTEXT.md
 /DESIGN.md

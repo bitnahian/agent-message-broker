@@ -6,7 +6,7 @@ A local message broker for coding agents. Wire event sources (GitHub, Jira, Goog
 
 Coding agents are batch processes. You prompt, they run, they stop. What an agent actually cares about (a ticket moved, a PR opened, a spec landed in a doc) happens between prompts, and the usual bridge is a polling script per agent or manual re-prompting.
 
-This tool was built around one concrete flow: a pi session watches a Jira board and a Google Doc. A ticket moves to In Progress, so pi gets the event and waits; the implementation spec is still being written in the doc. When the doc update lands, pi reads the spec, implements the ticket, and raises a PR. A Claude session watching the repo sees the PR event and reviews it. Three agents, three vendors, one broker, no glue scripts.
+One example of the pattern: a pi session watches a Jira board and a Google Doc. A ticket moves to In Progress, so pi gets the event and waits, because the implementation spec is still being written in the doc. When the doc update lands, pi reads the spec, implements the ticket, and raises a PR. A Claude session watching the repo sees the PR event and reviews it. Any set of sources, topics, and sessions composes the same way.
 
 Mechanically: sources publish events to topics, subscriptions push those events into live agent sessions, and the agent reacts in the conversation it's already having.
 
@@ -34,17 +34,17 @@ All commands below use `amb` (substitute `npx agent-message-broker` if you prefe
 See an event flow end to end:
 
 ```bash
-npx amb topics create prs --retain 50
-npx amb sources create --topic prs --kind github --options '{"repo":"cli/cli"}'
-npx amb sources start <sourceId>
-npx amb events list --topic prs
+npx agent-message-broker topics create prs --retain 50
+npx agent-message-broker sources create --topic prs --kind github --options '{"repo":"cli/cli"}'
+npx agent-message-broker sources start <sourceId>
+npx agent-message-broker events list --topic prs
 ```
 
 Now subscribe a running agent session so events push to it live:
 
 ```bash
-npx amb sessions                                                       # discover sessions
-npx amb subscriptions create --topic prs --agent pi --session <sessionId> --template "PR event: {{kind}} {{payload}}"
+npx agent-message-broker sessions                                                       # discover sessions
+npx agent-message-broker subscriptions create --topic prs --agent pi --session <sessionId> --template "PR event: {{kind}} {{payload}}"
 ```
 
 Verify an offline pass of the whole system (server + CLI + UI + retention, no external creds):
@@ -53,9 +53,9 @@ Verify an offline pass of the whole system (server + CLI + UI + retention, no ex
 npm run e2e
 ```
 
-## Recipes: wiring the demo flow
+## Recipes: agent-reacts-to-events wiring
 
-The demo flow (ticket moves to In Progress, implementation spec lands in a Google Doc, agent implements, another agent reviews the PR) is three topics wired to three sources. Each recipe is copy-paste; every source needs `sources start <sourceId>` after create.
+The flow shown above (ticket moves to In Progress, implementation spec lands in a Google Doc, agent implements, another agent reviews the PR) is three topics wired to three sources. Each recipe is copy-paste; every source needs `sources start <sourceId>` after create.
 
 ### 1. Jira: ticket pushed to In Progress
 
@@ -179,7 +179,7 @@ Polling is the baseline: every source pulls on an interval, so nothing has to be
 |---|---|---|
 | pi | direct push via pi-intercom broker protocol (unix socket; steers between turns) | automated e2e against a real broker |
 | claude | direct post to the session's inbox unix socket (optional auth-token first frame) | manual: `npx tsx scripts/verify-claude.mts <sessionId>` |
-| codex | app-server daemon JSON-RPC (`turn/steer` when active, else `turn/start`) | manual: `npx tsx scripts/verify-codex.mts <threadId>` |
+| codex | direct `codex app-server` JSON-RPC (`turn/steer` when active, else `turn/start`) | manual: `npx tsx scripts/verify-codex.mts <threadId>` |
 
 Manual verification needs the target CLI authenticated once by a human. Claude delivery is additionally subject to the target session's `crossSessionInbound` controls; untokenized broker posts may show a hold-for-approval notice. For pi, the automated e2e covers broker-level delivery, and `npx tsx scripts/verify-pi-live.mts <sessionId>` additionally exercises the live interactive `steer` path against a real pi session.
 
@@ -202,7 +202,7 @@ Manual verification needs the target CLI authenticated once by a human. Claude d
 Credentials are config-first: each kind reads `~/.amb/<kind>/credentials.json` (mode 0600), never the broker DB.
 
 ```bash
-npx amb config init                  # scaffold github|jira|google templates
+npx agent-message-broker config init                  # scaffold github|jira|google templates
 ```
 
 | Kind | Shape |
@@ -214,7 +214,7 @@ npx amb config init                  # scaffold github|jira|google templates
 Google uses a per-developer OAuth loopback flow:
 
 ```bash
-npx amb google login --credentials=<downloaded-oauth-client.json>
+npx agent-message-broker google login --credentials=<downloaded-oauth-client.json>
 ```
 
 `amb google login` performs consent once: it installs your downloaded OAuth client at `~/.amb/google/credentials.json` (0600), runs a localhost consent handshake (ephemeral port, browser opens, code captured, token exchanged), and caches the token at `~/.amb/google/token.json` (0600). The google feed then acts as you, which is what gives it access to Drive, Sheets, and Docs. The cached token auto-refreshes thereafter.

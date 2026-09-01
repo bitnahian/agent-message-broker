@@ -41,7 +41,7 @@ export function createProgram(client: BrokerClient): Command {
   sources.command("list").action(async () => print(await client.get("/sources")));
   sources.command("create")
     .requiredOption("--topic <idOrName>", "topic id or name")
-    .requiredOption("--kind <kind>", "polled-url | github | jira | gws")
+    .requiredOption("--kind <kind>", "polled-url | github | jira | google")
     .option("--options <json>", "kind-specific options JSON", "{}")
     .action(async (o: { topic: string; kind: string; options: string }) =>
       print(await client.post("/sources", { topicId: o.topic, kind: o.kind, options: JSON.parse(o.options) })));

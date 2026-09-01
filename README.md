@@ -87,6 +87,21 @@ amb sources create --topic doc --kind google --options '{
 
 Emits `gws:drive:changed` once per edit (the dedupe key includes `modifiedTime`). Drive's search language can't filter by file id, so match by name.
 
+**Include the content and a diff in the payload** — add `content` so the agent sees *what changed* without any follow-up calls:
+
+```bash
+amb sources create --topic doc --kind google --options '{
+  "api": "drive.files.list",
+  "params": { "q": "name = \"Implementation Plan\" and trashed = false", "fields": "files(id,name,modifiedTime,mimeType)" },
+  "itemsPath": "files",
+  "fingerprintField": "modifiedTime",
+  "content": { "format": "auto" },
+  "intervalMs": 120000
+}'
+```
+
+Events then carry `content` (full exported text) and `contentDiff` (unified diff vs the last seen version; `null` on first sighting). `format: "auto"` exports Docs as markdown, Sheets as CSV (first sheet), Presentations as text — override with `"format": "text" | "csv" | "markdown"`. Export is capped at 500KB; non-Google-native files report `contentError` instead.
+
 ### 3. GitHub: PRs by author, or a specific PR's comments/CI (for a reviewer agent)
 
 Needs `~/.amb/github/credentials.json` (`amb config init --kind github`). The `github` kind is resource-discriminated (ADR-0008).

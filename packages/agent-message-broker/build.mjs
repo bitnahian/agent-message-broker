@@ -22,6 +22,7 @@ const external = [
   "octokit",
   "google-auth-library",
   "googleapis",
+  "diff",
 ];
 
 const common = {

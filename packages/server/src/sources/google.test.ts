@@ -111,3 +111,129 @@ describe("GoogleSource (SDK poller)", () => {
     expect(store.listEvents()).toHaveLength(2);
   });
 });
+describe("GoogleSource content diff", () => {
+  const DOC_ITEM = {
+    id: "doc1",
+    name: "Implementation Plan",
+    mimeType: "application/vnd.google-apps.document",
+    modifiedTime: "2026-01-01T00:00:00Z",
+  };
+
+  function contentRunner(exports: string | (() => string), calls?: string[]): GoogleApiRunner {
+    return async (api, params) => {
+      calls?.push(`${api}:${JSON.stringify(params)}`);
+      if (api === "drive.files.export") {
+        const body = typeof exports === "function" ? exports() : exports;
+        return body as unknown as Record<string, unknown>;
+      }
+      return { files: [{ ...DOC_ITEM }] };
+    };
+  }
+
+  it("first sighting emits full content with null diff; export mime auto-picked as markdown", async () => {
+    const calls: string[] = [];
+    const { store, src } = setup(contentRunner("# Plan\nDo the thing\n", calls), {
+      api: "drive.files.list", itemsPath: "files", fingerprintField: "modifiedTime",
+      content: { format: "auto" },
+    });
+    expect(await src.tick()).toBe(1);
+    const ev = store.listEvents()[0]!;
+    const p = ev.payload as { content?: string; contentDiff?: string | null; contentError?: string };
+    expect(p.content).toBe("# Plan\nDo the thing\n");
+    expect(p.contentDiff).toBeNull();
+    expect(p.contentError).toBeUndefined();
+    expect(calls.some((c) => c.includes("drive.files.export") && c.includes("text/markdown"))).toBe(true);
+  });
+
+  it("changed fingerprint emits a unified contentDiff against the cached version", async () => {
+    let body = "# Plan\nDo the thing\n";
+    const { store, src } = setup(contentRunner(() => body), {
+      api: "drive.files.list", itemsPath: "files", fingerprintField: "modifiedTime",
+      content: true,
+    });
+    await src.tick();
+    body = "# Plan\nDo the thing better\n";
+    // simulate a modifiedTime change → clear the base dedupe so the (new-fingerprint) key re-emits
+    const source = store.listSources()[0]!;
+    store.setSourceState(source.id, "seenKeys", []);
+    expect(await src.tick()).toBe(1);
+    const evs = store.listEvents().filter((e) => (e.payload as { contentDiff?: string }).contentDiff);
+    const diff = evs[0]!.payload as { contentDiff: string; content: string };
+    expect(diff.contentDiff).toContain("-Do the thing");
+    expect(diff.contentDiff).toContain("+Do the thing better");
+    expect(diff.content).toBe("# Plan\nDo the thing better\n");
+  });
+
+  it("does not fetch content for already-seen keys", async () => {
+    const calls: string[] = [];
+    const { src } = setup(contentRunner("# same", calls), {
+      api: "drive.files.list", itemsPath: "files", fingerprintField: "modifiedTime",
+      content: { format: "auto" },
+    });
+    await src.tick();
+    calls.length = 0;
+    await src.tick();
+    expect(calls.filter((c) => c.includes("drive.files.export"))).toHaveLength(0);
+  });
+
+  it("export failure degrades to contentError without losing the metadata event", async () => {
+    const runner: GoogleApiRunner = async (api) => {
+      if (api === "drive.files.export") throw new Error("exportSizeLimitExceeded");
+      return { files: [{ id: "sheet1", mimeType: "application/vnd.google-apps.spreadsheet", modifiedTime: "2026-01-01T00:00:00Z" }] };
+    };
+    const { store, src } = setup(runner, {
+      api: "drive.files.list", itemsPath: "files", fingerprintField: "modifiedTime",
+      content: true,
+    });
+    expect(await src.tick()).toBe(1);
+    const ev = store.listEvents()[0]!;
+    expect(ev.kind).toBe("gws:drive:changed");
+    const p = ev.payload as { content: string | null; contentError: string };
+    expect(p.content).toBeNull();
+    expect(p.contentError).toContain("content export failed");
+  });
+
+  it("format override forces the export mime (csv for sheets)", async () => {
+    const calls: string[] = [];
+    const { src } = setup(contentRunner("a,b\n1,2\n", calls), {
+      api: "drive.files.list", itemsPath: "files", fingerprintField: "modifiedTime",
+      content: { format: "csv" },
+    });
+    await src.tick();
+    expect(calls.some((c) => c.includes("drive.files.export") && c.includes("text/csv"))).toBe(true);
+  });
+
+  it("oversized content is truncated with contentTruncated set", async () => {
+    const big = "x".repeat(500 * 1024 + 10);
+    const { store, src } = setup(contentRunner(big), {
+      api: "drive.files.list", itemsPath: "files", fingerprintField: "modifiedTime",
+      content: true,
+    });
+    await src.tick();
+    const p = store.listEvents()[0]!.payload as { content: string; contentTruncated?: boolean };
+    expect(p.content.length).toBe(500 * 1024);
+    expect(p.contentTruncated).toBe(true);
+  });
+});
+
+describe("GoogleSource content diff edge cases", () => {
+  it("empty baseline still produces a diff on the next version", async () => {
+    let body = "";
+    const runner: GoogleApiRunner = async (api) => {
+      if (api === "drive.files.export") return body as unknown as Record<string, unknown>;
+      return { files: [{ ...{ id: "doc1", mimeType: "application/vnd.google-apps.document", modifiedTime: "2026-01-01T00:00:00Z" } }] };
+    };
+    const { store, src } = setup(runner, {
+      api: "drive.files.list", itemsPath: "files", fingerprintField: "modifiedTime",
+      content: true,
+    });
+    await src.tick(); // baseline: empty export
+    body = "# Now the content arrives\n";
+    const source = store.listSources()[0]!;
+    store.setSourceState(source.id, "seenKeys", []);
+    await src.tick();
+    const evs = store.listEvents().filter((e) => (e.payload as { contentDiff?: string }).contentDiff);
+    expect(evs.length).toBe(1);
+    expect((evs[0]!.payload as { contentDiff: string }).contentDiff).toContain("+# Now the content arrives");
+  });
+});

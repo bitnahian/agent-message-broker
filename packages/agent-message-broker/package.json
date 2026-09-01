@@ -1,6 +1,6 @@
 {
   "name": "agent-message-broker",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A local message broker for coding agents. Wire event sources (GitHub, Jira, Google Workspace, polled URLs, webhooks) to topics and push events into live coding-agent sessions (pi, Claude Code, Codex).",
   "type": "module",
   "license": "MIT",
@@ -52,7 +52,8 @@
     "commander": "^13.1.0",
     "fastify": "^5.2.0",
     "google-auth-library": "^10.9.1",
-    "octokit": "^5.0.5"
+    "octokit": "^5.0.5",
+    "diff": "^9.0.0"
   },
   "peerDependencies": {
     "googleapis": ">=140.0.0"

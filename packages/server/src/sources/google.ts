@@ -1,7 +1,32 @@
+import { createTwoFilesPatch } from "diff";
 import { Poller, type PollResult } from "./poller.js";
 import type { SourceContext } from "./registry.js";
 import { loadCredentials } from "./credentials.js";
 import type { GoogleCredentials } from "./credentials.js";
+
+const MAX_CONTENT_BYTES = 500 * 1024;
+
+/** Drive export MIME per Google-native type (docs → markdown preserves structure). */
+const NATIVE_EXPORT_MIMES: Record<string, string> = {
+  "application/vnd.google-apps.document": "text/markdown",
+  "application/vnd.google-apps.presentation": "text/plain",
+  "application/vnd.google-apps.spreadsheet": "text/csv",
+};
+const FORMAT_OVERRIDES: Record<string, string> = {
+  text: "text/plain",
+  csv: "text/csv",
+  markdown: "text/markdown",
+};
+
+export interface GoogleContentOptions {
+  /**
+   * Export format. "auto" picks from the item's mimeType (docs → markdown,
+   * sheets → csv, presentations → text) and falls back to text/plain when the
+   * mimeType is unknown. Non-native files cannot be exported — their events
+   * carry `contentError` instead.
+   */
+  format?: "auto" | "text" | "csv" | "markdown";
+}
 
 export interface GoogleSourceOptions {
   /** googleapis API target, e.g. "drive.files.list" | "sheets.spreadsheets.values.get". */
@@ -14,6 +39,12 @@ export interface GoogleSourceOptions {
   idField?: string;
   /** when set, dedupe key becomes `<id>@<field value>` (e.g. "modifiedTime") so updates re-emit. */
   fingerprintField?: string;
+  /**
+   * When set, exported file content is fetched for emitted items and the event
+   * payload carries `content` plus a unified `contentDiff` against the last
+   * seen version (null on first sighting). Only Google-native files export.
+   */
+  content?: boolean | GoogleContentOptions;
   intervalMs?: number;
 }
 
@@ -134,6 +165,7 @@ export class GoogleSource extends Poller {
 
   protected async poll(): Promise<PollResult[]> {
     const { itemsPath, idField = "id", fingerprintField, params = {} } = this.opts;
+    const contentOpts = this.opts.content === true ? {} : this.opts.content ?? null;
     let doc: Record<string, unknown>;
     try {
       doc = await this.runner(this.opts.api, params);
@@ -143,19 +175,67 @@ export class GoogleSource extends Poller {
     }
     const items = (doc[itemsPath] as Record<string, unknown>[] | undefined) ?? [];
     const svc = this.serviceName();
+    // Only items the base dedupe will actually emit justify a content fetch —
+    // consult the same seenKeys the base class uses.
+    const seen = new Set(this.ctx.getState<string[]>("seenKeys") ?? []);
     const results: PollResult[] = [];
     for (const item of items) {
       const id = String(dig(item, idField) ?? "");
       if (!id) continue;
       const fingerprint = fingerprintField ? String(dig(item, fingerprintField) ?? "") : "";
       const key = fingerprint ? `gws:${svc}:${id}@${fingerprint}` : `gws:${svc}:${id}`;
+      const payload: Record<string, unknown> = { service: svc, id, fingerprint: fingerprint || undefined, item };
+      if (contentOpts && !seen.has(key)) {
+        Object.assign(payload, await this.fetchContentWithDiff(id, item, fingerprint, contentOpts));
+      }
       results.push({
         kind: `gws:${svc}:${fingerprintField ? "changed" : "new"}`,
         key,
-        payload: { service: svc, id, fingerprint: fingerprint || undefined, item },
+        payload,
       });
     }
     return results;
+  }
+
+  /**
+   * Export the item's content via drive.files.export, diff against the cached
+   * previous version, and update the cache. Never throws: fetch failures land
+   * in `contentError` so the metadata event still flows.
+   */
+  private async fetchContentWithDiff(
+    id: string,
+    item: Record<string, unknown>,
+    fingerprint: string,
+    contentOpts: GoogleContentOptions,
+  ): Promise<Pick<Record<string, unknown>, "content" | "contentDiff" | "contentTruncated" | "contentError">> {
+    const cacheKey = `content:${id}`;
+    const cached = this.ctx.getState<{ fingerprint: string; content: string } | undefined>(cacheKey);
+    const format = contentOpts.format ?? "auto";
+    const itemMime = typeof item.mimeType === "string" ? item.mimeType : undefined;
+    const exportMime = format === "auto"
+      ? (itemMime && NATIVE_EXPORT_MIMES[itemMime]) || "text/plain"
+      : FORMAT_OVERRIDES[format] ?? "text/plain";
+    try {
+      // the runner resolves to the response data — for files.export (text
+      // formats) that is the exported string itself
+      const data = await this.runner("drive.files.export", { fileId: id, mimeType: exportMime });
+      let body = typeof data === "string" ? data : JSON.stringify(data);
+      let truncated = false;
+      if (body.length > MAX_CONTENT_BYTES) {
+        body = body.slice(0, MAX_CONTENT_BYTES);
+        truncated = true;
+      }
+      // diff whenever a baseline exists — even an empty one (fresh docs can
+      // export empty before Drive's render index catches up)
+      const diff = cached
+        ? createTwoFilesPatch("previous", "current", cached.content ?? "", body, undefined, undefined, { context: 3 })
+        : null;
+      this.ctx.setState(cacheKey, { fingerprint, content: body });
+      return { content: body, contentDiff: diff, contentTruncated: truncated || undefined };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { content: null, contentDiff: null, contentError: `content export failed (${exportMime}): ${msg}` };
+    }
   }
 }
 

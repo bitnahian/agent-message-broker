@@ -29,10 +29,11 @@ function assert(c: unknown, m: string): asserts c { if (!c) throw new Error("ASS
 async function getJson(p: string) { const r = await fetch(BASE + p, { headers: { authorization: "Bearer " + TOKEN } }); const j: any = await r.json().catch(() => ({})); if (!r.ok) throw new Error(`GET ${p} ${r.status}: ${JSON.stringify(j)}`); return j; }
 async function postJson(p: string, b: unknown) { const r = await fetch(BASE + p, { method: "POST", headers: { authorization: "Bearer " + TOKEN, "content-type": "application/json" }, body: JSON.stringify(b) }); const j: any = await r.json().catch(() => ({})); if (!r.ok) throw new Error(`POST ${p} ${r.status}: ${JSON.stringify(j)}`); return j; }
 async function waitHealthy() { for (let i = 0; i < 60; i++) { try { if ((await fetch(BASE + "/health")).ok) return; } catch { /* not up yet */ } await sleep(200); } throw new Error("server not healthy"); }
-async function waitFor<T>(fn: () => Promise<T>, pred: (v: T) => boolean, what: string) { for (let i = 0; i < 30; i++) { const v = await fn(); if (pred(v)) return v; await sleep(1000); } throw new Error("timeout: " + what); }
+async function waitFor<T>(fn: () => Promise<T>, pred: (v: T) => boolean, what: string, tries = 30) { for (let i = 0; i < tries; i++) { const v = await fn(); if (pred(v)) return v; await sleep(1000); } throw new Error("timeout: " + what); }
 
 let server: any = null;
 let spreadsheetId: string | null = null;
+let docId: string | null = null;
 
 /** Google OAuth client JSON: env secret first, then the stable-name local file. */
 function googleClientJson(): string {
@@ -113,12 +114,64 @@ try {
   const dels = await getJson(`/deliveries?eventId=${first.id}`);
   assert(dels.length > 0, "expected a delivery row");
   console.log("✓ delivery attempt recorded:", JSON.stringify(dels[0]));
+  // ---- 5) docs content-diff: scratch doc watched with content:true (ADR-0009) ----
+  const docName = `amb-google-e2e-doc-${STAMP}`;
+  const docCreate = await drive.files.create({ requestBody: { name: docName, mimeType: "application/vnd.google-apps.document" }, fields: "id" });
+  docId = docCreate.data.id ?? null;
+  assert(docId, "expected a doc id");
+  const docsApi = google.docs({ version: "v1", auth: client });
+  await docsApi.documents.batchUpdate({ documentId: docId, requestBody: { requests: [{ insertText: { location: { index: 1 }, text: "hello\nworld\n" } }] } });
+
+  const docTopic = await postJson("/topics", { name: `e2e-google-doc-${STAMP}`, retainN: 50 });
+  const docSrc = await postJson("/sources", {
+    topicId: docTopic.id, kind: "google",
+    options: {
+      api: "drive.files.list",
+      params: { q: `name = '${docName}' and trashed = false`, fields: "files(id,name,modifiedTime,mimeType)" },
+      itemsPath: "files", fingerprintField: "modifiedTime", content: true, intervalMs: 2000,
+    },
+  });
+  await postJson(`/sources/${docSrc.id}/start`, {});
+  console.log("doc topic/source created + started");
+
+  // first sighting with content (export may lag a fresh doc — wait it out)
+  const firstDocEvs = await waitFor(
+    async () => getJson(`/events?topicId=${docTopic.id}`),
+    (e: any[]) => e.some((x: any) => x.kind === "gws:drive:changed" && x.payload?.content != null),
+    "doc content event",
+    60,
+  );
+  const firstContent = (firstDocEvs.find((x: any) => x.kind === "gws:drive:changed").payload as any).content as string;
+  assert(firstContent.includes("hello"), "expected the doc text in payload.content");
+  console.log("✓ docs content fetched on first sighting");
+
+  // edit the doc → new fingerprint → event carrying a unified contentDiff
+  await docsApi.documents.batchUpdate({ documentId: docId, requestBody: { requests: [{ insertText: { location: { index: 13 }, text: "EDITED SECTION\n" } }] } });
+  const diffEvs = await waitFor(
+    async () => getJson(`/events?topicId=${docTopic.id}`),
+    (e: any[]) => e.some((x: any) => x.kind === "gws:drive:changed" && x.payload?.contentDiff?.includes("+EDITED SECTION")),
+    "doc contentDiff event with +EDITED SECTION",
+    60,
+  );
+  const diff = (diffEvs.find((x: any) => x.kind === "gws:drive:changed").payload as any).contentDiff as string;
+  assert(diff.includes("-world") || diff.includes("+EDITED SECTION"), "expected diff hunks");
+  console.log("✓ docs contentDiff emitted with +EDITED SECTION");
+
   console.log("\nGOOGLE (SHEETS VIA OAUTH) E2E FULL PASS");
 } catch (e) {
   console.log("GOOGLE E2E ERROR:", (e as Error).message);
   process.exitCode = 1;
 } finally {
   // ---- cleanup: delete scratch sheet + temp dir, stop broker ----
+  if (docId) {
+    try {
+      process.env.AMB_HOME = AMB_HOME;
+      const { cachedGoogleClient: c2 } = await import("../packages/server/src/sources/google-auth.js");
+      const google = (await import("googleapis")).google;
+      await google.drive({ version: "v3", auth: c2() }).files.delete({ fileId: docId });
+      console.log("deleted scratch doc", docId);
+    } catch { /* ignore cleanup errors */ }
+  }
   if (spreadsheetId) {
     try {
       process.env.AMB_HOME = AMB_HOME;

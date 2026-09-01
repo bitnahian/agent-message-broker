@@ -38,6 +38,9 @@ export class AppServerClient {
       this.failAllPending("codex app-server exited");
     });
     this.proc.stderr?.on("data", () => { /* sink */ });
+    // writing to a dead child's stdin emits an 'error' event — sink it here;
+    // call() surfaces write failures via the write callback / spawnError.
+    this.proc.stdin?.on("error", () => { /* sink */ });
     this.proc.stdout?.on("data", (chunk: Buffer) => {
       this.buf += chunk.toString("utf-8");
       let idx: number;

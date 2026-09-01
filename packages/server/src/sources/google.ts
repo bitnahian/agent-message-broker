@@ -207,7 +207,7 @@ export class GoogleSource extends Poller {
     item: Record<string, unknown>,
     fingerprint: string,
     contentOpts: GoogleContentOptions,
-  ): Promise<Pick<Record<string, unknown>, "content" | "contentDiff" | "contentTruncated" | "contentError">> {
+  ): Promise<{ content: string | null; contentDiff: string | null; contentTruncated?: boolean; contentError?: string }> {
     const cacheKey = `content:${id}`;
     const cached = this.ctx.getState<{ fingerprint: string; content: string } | undefined>(cacheKey);
     const format = contentOpts.format ?? "auto";

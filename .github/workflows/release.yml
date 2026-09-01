@@ -1,0 +1,45 @@
+name: Release
+
+# Publishes agent-message-broker to npm when a v* tag is pushed, then attaches
+# the packed tarball to the matching GitHub release (created if missing).
+#
+# One-time setup: repo secret NPM_TOKEN = a granular npm automation token with
+# read/write on the agent-message-broker package.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # release upload
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org/
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+      - name: Publish to npm
+        working-directory: packages/agent-message-broker
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Attach tarball to GitHub release
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          cd packages/agent-message-broker
+          npm pack
+          gh release upload "$GITHUB_REF_NAME" "agent-message-broker-${VERSION}.tgz" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

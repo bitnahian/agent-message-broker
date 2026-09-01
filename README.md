@@ -209,7 +209,7 @@ npx amb config init                  # scaffold github|jira|google templates
 |---|---|
 | `github` | `{ token }` |
 | `jira` | `{ email, apiToken, domain }` |
-| `google` | OAuth client (installed/web) — written by the login flow; service-account and authorized-user gcloud shapes also load as fallbacks |
+| `google` | OAuth client (installed/web), written by the login flow; service-account and authorized-user gcloud shapes also load as fallbacks |
 
 Google uses a per-developer OAuth loopback flow:
 

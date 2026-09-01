@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CodexAdapter } from "./index.js";
+import { CodexAdapter, resetBinaryCache } from "./index.js";
 
 /** Fake `codex app-server proxy` process speaking JSON-RPC over stdio. */
 function fakeProxy(handler: (method: string, params: unknown) => unknown): ChildProcess {
@@ -44,6 +44,7 @@ class RpcLog {
 function makeAdapter(handler: (method: string, params: unknown) => unknown, extra: Partial<ConstructorParameters<typeof CodexAdapter>[0]> = {}) {
   const log = new RpcLog();
   const adapter = new CodexAdapter({
+    binaryName: process.execPath,
     spawnFn: (cmd, args) => fakeProxy((m, p) => { log.calls.push({ method: m, params: p }); return handler(m, p); }),
     ...extra,
   } as ConstructorParameters<typeof CodexAdapter>[0]);
@@ -175,5 +176,52 @@ describe("CodexAdapter v2 (app-server live protocol)", () => {
     const sessions = await adapter.listSessions();
     expect(sessions[0]!.label).toBe("session-111111".slice(0, 8));
     expect(sessions[1]!.label).toBe("def");
+  });
+});
+
+describe("codex not installed (hot-path installed check)", () => {
+  let dir: string;
+  beforeEach(() => {
+    resetBinaryCache();
+    dir = mkdtempSync(join(tmpdir(), "amb-codex-missing-"));
+    // a session file the filesystem fallback should still discover
+    const sub = join(dir, "2026", "08", "31");
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(join(sub, "rollout-12345678-1234-5678-1234-567812345678.jsonl"), JSON.stringify({ payload: { cwd: "/proj" } }));
+  });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); resetBinaryCache(); });
+
+  function missingAdapter() {
+    return new CodexAdapter({ binaryName: "amb-binary-that-does-not-exist", sessionsDir: dir });
+  }
+
+  it("listSessions skips the daemon and falls back to the filesystem scan", async () => {
+    const sessions = await missingAdapter().listSessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({ agent: "codex", sessionId: "12345678-1234-5678-1234-567812345678" });
+  });
+
+  it("deliver fails soft with an actionable message", async () => {
+    const res = await missingAdapter().deliver({ agent: "codex", sessionId: "x" }, { message: "hi", eventId: "e1" });
+    expect(res.ok).toBe(false);
+    expect(res.detail).toContain("not found on PATH");
+    expect(res.detail).toContain("codex installed");
+  });
+
+  it("binary check is TTL-cached: repeated calls stay cheap and consistent", async () => {
+    const a = missingAdapter();
+    expect(await a.listSessions()).toHaveLength(1);
+    expect(await a.listSessions()).toHaveLength(1); // served from the cache path
+  });
+
+  it("a broken client (spawn failed) is dropped so a later install can recover", async () => {
+    const adapter = new CodexAdapter({
+      binaryName: "amb-binary-that-does-not-exist",
+      sessionsDir: dir,
+      // clientFactory would spawn a real binary — must never be reached while binary is missing
+      clientFactory: () => { throw new Error("must not spawn"); },
+    });
+    const sessions = await adapter.listSessions();
+    expect(sessions).toHaveLength(1); // fs fallback, no spawn attempted
   });
 });

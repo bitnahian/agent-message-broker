@@ -23,11 +23,22 @@ export class AppServerClient {
   private nextId = 1;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private initialized = false;
+  /** Set when the codex process failed to spawn (e.g. not installed). */
+  spawnError: Error | null = null;
 
   constructor(spawnFn: SpawnFn = defaultSpawn, proxyArgs: string[] = ["app-server"], cmd = "codex") {
     this.proc = spawnFn(cmd, proxyArgs);
+    // An unhandled 'error' event on the child process crashes the whole broker
+    // (e.g. ENOENT when codex is not installed) — always listen.
+    this.proc.on("error", (err: Error) => {
+      this.spawnError = err;
+      this.failAllPending(`codex app-server failed to start: ${err.message}`);
+    });
+    this.proc.on("exit", () => {
+      this.failAllPending("codex app-server exited");
+    });
     this.proc.stderr?.on("data", () => { /* sink */ });
-    this.proc.stdout!.on("data", (chunk: Buffer) => {
+    this.proc.stdout?.on("data", (chunk: Buffer) => {
       this.buf += chunk.toString("utf-8");
       let idx: number;
       while ((idx = this.buf.indexOf("\n")) >= 0) {
@@ -36,6 +47,11 @@ export class AppServerClient {
         if (line.trim()) this.handleLine(line);
       }
     });
+  }
+
+  private failAllPending(message: string): void {
+    for (const [, p] of this.pending) p.reject(new Error(message));
+    this.pending.clear();
   }
 
   private handleLine(line: string): void {
@@ -50,11 +66,25 @@ export class AppServerClient {
   }
 
   private call<T = unknown>(method: string, params: unknown = {}): Promise<T> {
+    if (this.spawnError) {
+      return Promise.reject(new Error(`codex app-server unavailable: ${this.spawnError.message}`));
+    }
+    const stdin = this.proc.stdin;
+    // exitCode: null while running (real process); undefined on fake/test doubles
+    const exited = this.proc.exitCode !== undefined && this.proc.exitCode !== null;
+    if (!stdin || exited) {
+      return Promise.reject(new Error("codex app-server is not running"));
+    }
     const id = this.nextId++;
     const req = { jsonrpc: "2.0", id, method, params };
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
-      this.proc.stdin!.write(JSON.stringify(req) + "\n");
+      stdin.write(JSON.stringify(req) + "\n", (err) => {
+        if (err) {
+          this.pending.delete(id);
+          reject(new Error(`codex app-server write failed: ${err.message}`));
+        }
+      });
     });
   }
 

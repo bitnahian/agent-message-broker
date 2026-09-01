@@ -39,3 +39,19 @@ describe("app-server-client helpers", () => {
     expect(findActiveTurnId({ thread: { status: { type: "active" }, turns: [] } })).toBeNull();
   });
 });
+import { spawn } from "node:child_process";
+
+describe("AppServerClient spawn-failure hardening (codex not installed)", () => {
+  it("does not crash the process and rejects requests with a clear message", async () => {
+    const c = new AppServerClient((_cmd, args) => spawn("/nonexistent/amb-missing-codex", args));
+    await expect(c.request("thread/list", {})).rejects.toThrow(/codex app-server/);
+    await expect(c.request("thread/list", {})).rejects.toThrow(/unavailable/); // subsequent calls reject too
+    expect(c.spawnError).toBeTruthy();
+  });
+
+  it("rejects pending requests when the process exits mid-flight", async () => {
+    // /bin/false... a process that exits immediately after spawn succeeds
+    const c = new AppServerClient((_cmd, args) => spawn("false", args));
+    await expect(c.request("thread/list", {})).rejects.toThrow();
+  });
+});

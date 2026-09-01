@@ -87,20 +87,39 @@ amb sources create --topic doc --kind google --options '{
 
 Emits `gws:drive:changed` once per edit (the dedupe key includes `modifiedTime`). Drive's search language can't filter by file id, so match by name.
 
-### 3. GitHub: PR opened, for a reviewer agent
+### 3. GitHub: PRs by author, or a specific PR's comments/CI (for a reviewer agent)
 
-Needs `~/.amb/github/credentials.json` (`amb config init --kind github`).
+Needs `~/.amb/github/credentials.json` (`amb config init --kind github`). The `github` kind is resource-discriminated (ADR-0008).
+
+**Repo-wide PR discovery by author** (`resource: search`):
 
 ```bash
 amb topics create prs --retain 100
 amb sources create --topic prs --kind github --options '{
   "repo": "owner/repo",
-  "eventTypes": ["PullRequestEvent"],
+  "resource": "search",
+  "queries": [{"name": "my-prs", "q": "is:pr is:open author:owner"}],
+  "intervalMs": 120000
+}'
+```
+
+Emits `github:search-match` when an item newly appears in a result set. Any Search syntax works: `review-requested:me`, `mentions:me`, `label:security`… `repo:` is auto-injected unless the query scopes its own.
+
+**Track a specific PR's comments, reviews, and CI** (`resource: pulls`):
+
+```bash
+amb sources create --topic prs --kind github --options '{
+  "repo": "owner/repo",
+  "resource": "pulls",
+  "prs": [142],
+  "include": ["comments", "reviews", "ci", "state"],
   "intervalMs": 60000
 }'
 ```
 
-Emits `github:PullRequestEvent` with `{repo, actor, summary}` covering opened/closed/merged/synchronize.
+Emits `github:pr-comment`, `github:pr-review`, `github:pr-ci` (terminal conclusions only: success/failure/cancelled — CI is fetched with `head_sha` server-side filtering; the events feed can't see CI at all), and `github:pr-state` (open/merged/closed/conflicted).
+
+The original generic feed remains available as `"resource": "events"` (the default), emitting `github:<Type>` with the `eventTypes` allowlist.
 
 ### 4. Subscribe the live sessions
 
@@ -130,7 +149,7 @@ Polling is the baseline — every source pulls on an interval, so nothing requir
 | Source | `kind` | How it polls |
 |---|---|---|
 | Any URL (Slack thread, file, ticket, PR…) | `polled-url` | fetch + ETag/sha256 change detection |
-| GitHub | `github` | octokit SDK poll of `repos/{o}/{r}/events`; event-type allowlist |
+| GitHub | `github` | octokit SDK, `resource`-discriminated (ADR-0008): `events` (repo event feed), `search` (saved queries: `author:`, `review-requested:`, `mentions:`…), `pulls` (per-PR comments/reviews/CI/state) |
 | Jira | `jira` | Atlassian REST `rest/api/3/search/jql`; `key@updated` cursor |
 | Google | `google` | googleapis SDK as the logged-in developer; Drive/Sheets/Docs endpoints (`drive.files.list`, `sheets.spreadsheets.values.get`, …) |
 | Generic webhook | `generic-webhook` | opt-in tier; envelope `{type,id,occurredAt,payload}` → `webhook:<type>` |

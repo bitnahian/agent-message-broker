@@ -81,9 +81,16 @@ export function buildApp(opts: AppOptions): FastifyInstance {
 
   const KIND_REQUIRED: Record<string, string[]> = {
     "polled-url": ["url"],
-    github: [],
+    github: [], // per-resource validation below (ADR-0008)
     jira: ["jql"],
     google: ["api", "itemsPath"],
+  };
+
+  // github: requirements depend on the resource (events|search|pulls)
+  const GITHUB_RESOURCE_REQUIRED: Record<string, string[]> = {
+    events: [], // repo validated descriptively at poll time (back-compat)
+    search: ["repo", "queries"],
+    pulls: ["repo", "prs"],
   };
 
   app.post("/sources", async (req, reply) => {
@@ -91,6 +98,11 @@ export function buildApp(opts: AppOptions): FastifyInstance {
     if (!b.topicId || !b.kind) return reply.code(400).send({ error: "topicId and kind required" });
     const missing = (KIND_REQUIRED[b.kind] ?? []).filter((k) => !(k in (b.options ?? {})));
     if (missing.length > 0) return reply.code(400).send({ error: `options missing: ${missing.join(", ")}` });
+    if (b.kind === "github") {
+      const resource = typeof b.options?.resource === "string" ? b.options.resource : "events";
+      const missingResource = (GITHUB_RESOURCE_REQUIRED[resource] ?? []).filter((k) => !(k in (b.options ?? {})));
+      if (missingResource.length > 0) return reply.code(400).send({ error: `options missing for resource ${resource}: ${missingResource.join(", ")}` });
+    }
     const topic = store.getTopic(b.topicId);
     if (!topic) return reply.code(404).send({ error: "topic not found" });
     const duplicates = store.listSources().filter((s) =>

@@ -2,12 +2,24 @@ import { Octokit } from "octokit";
 import { Poller, type PollResult } from "./poller.js";
 import type { SourceContext } from "./registry.js";
 import { loadCredentials } from "./credentials.js";
+import { pollSearch, type SearchQuery, type SearchItem } from "./github-search.js";
+import { pollPulls, type PullsInclude } from "./github-pulls.js";
+
+export type { SearchQuery, SearchItem, PullsInclude };
 
 export interface GitHubSourceOptions {
   /** e.g. "owner/repo" → queries repos/{owner}/{repo}/events */
   repo?: string;
-  /** feed event-type allowlist (ADR-0005); empty = all supported types */
+  /** Which GitHub API family to watch; default "events" (ADR-0008). */
+  resource?: "events" | "search" | "pulls";
+  /** events: feed event-type allowlist (ADR-0005); empty = all supported types */
   eventTypes?: string[];
+  /** search: named saved queries (ADR-0008) */
+  queries?: SearchQuery[];
+  /** pulls: explicit PR numbers to track */
+  prs?: number[];
+  /** pulls: which streams to poll; default all four */
+  include?: PullsInclude[];
   intervalMs?: number;
   /** max events per poll; default 30 */
   perPage?: number;
@@ -24,8 +36,9 @@ export interface GhEvent {
 
 /**
  * Minimal octokit surface the GitHub feed depends on, so tests can inject a
- * fake client (no network). We only read repository events and, for webhook
- * registration (ADR-0007), manage hooks.
+ * fake client (no network). Repository events + webhook management (ADR-0007)
+ * are required; search/pulls/issues/actions namespaces (ADR-0008) are optional
+ * so existing fakes stay valid — the real client always has them.
  */
 export interface OctokitLike {
   rest: {
@@ -36,6 +49,20 @@ export interface OctokitLike {
       listHooks?: (p: { owner: string; repo: string }) => Promise<{ data: { id: number }[] }>;
       createWebhook?: (p: { owner: string; repo: string; name: string; config: Record<string, unknown>; events: string[] }) => Promise<{ data: { id: number } }>;
       deleteWebhook?: (p: { owner: string; repo: string; hook_id: number }) => Promise<{ status: number }>;
+    };
+    search?: {
+      /** octokit v5 name for /search/issues ("issues and pull requests") */
+      issuesAndPullRequests: (p: { q: string; per_page?: number }) => Promise<{ data: { items: SearchItem[] } }>;
+    };
+    pulls?: {
+      get: (p: { owner: string; repo: string; pull_number: number }) => Promise<{ data: import("./github-pulls.js").PrDetail }>;
+      listReviews: (p: { owner: string; repo: string; pull_number: number; per_page?: number }) => Promise<{ data: import("./github-pulls.js").PrReview[] }>;
+    };
+    issues?: {
+      listComments: (p: { owner: string; repo: string; issue_number: number; per_page?: number }) => Promise<{ data: import("./github-pulls.js").IssueComment[] }>;
+    };
+    actions?: {
+      listWorkflowRunsForRepo: (p: { owner: string; repo: string; head_sha: string; per_page?: number }) => Promise<{ data: { workflow_runs: import("./github-pulls.js").WorkflowRun[] } }>;
     };
   };
 }
@@ -69,10 +96,13 @@ function summarize(ev: GhEvent): string {
 }
 
 /**
- * GitHub SDK poller over octokit (ADR-0006), replacing `gh api` CLI exec.
- * Polls repository events, filters by the feed event-type allowlist, dedupes
- * on GitHub's stable event id, and emits `github:<Type>` events (same kinds as
- * the previous CLI poller / as the webhook tier).
+ * GitHub SDK source (ADR-0006, ADR-0008). One kind discriminated by the
+ * `resource` option (default "events"):
+ *  - "events": repository events feed, event-type allowlist, `github:<Type>` kinds
+ *  - "search": named saved queries via the Search API, `github:search-match`
+ *  - "pulls":  per-PR tracking (comments/reviews/CI/state), `github:pr-*` kinds
+ *
+ * Also owns webhook registration for the events tier (ADR-0007).
  */
 export class GitHubSource extends Poller {
   private opts: GitHubSourceOptions;
@@ -108,6 +138,19 @@ export class GitHubSource extends Poller {
   }
 
   protected async poll(): Promise<PollResult[]> {
+    const resource = this.opts.resource ?? "events";
+    try {
+      if (resource === "search") return await pollSearch(this.opts, this.api);
+      if (resource === "pulls") return await pollPulls(this.opts, this.api);
+    } catch (err) {
+      // config-shape errors (missing queries/prs/repo) surface as loud, deduped errors
+      const msg = err instanceof Error ? err.message : String(err);
+      return [{ kind: "github:error", key: `error:${resource}:${msg.slice(0, 80)}`, payload: { error: msg } }];
+    }
+    return this.pollEvents();
+  }
+
+  private async pollEvents(): Promise<PollResult[]> {
     let events: GhEvent[];
     try {
       events = await this.fetchEvents();

@@ -22,9 +22,20 @@ const AGENT_NAMES: Record<string, string> = { pi: "pi", claude: "Claude", codex:
 const KIND_LABELS: Record<string, string> = { "polled-url": "Polled URL", github: "GitHub", jira: "Jira", google: "Google Workspace" };
 const KIND_EXAMPLES: Record<string, string> = {
   "polled-url": '{"url": "https://example.com/file.txt", "intervalMs": 30000}',
-  github: '{"repo": "owner/repo", "intervalMs": 60000}',
+  github: '{"repo": "owner/repo", "resource": "events", "intervalMs": 60000}',
   jira: '{"jql": "project = KAN ORDER BY updated DESC", "intervalMs": 120000}',
   google: '{"api": "drive.files.list", "params": {"q": "trashed = false", "pageSize": 10}, "itemsPath": "files", "fingerprintField": "modifiedTime"}',
+};
+// Per-resource option examples for the github kind (ADR-0008)
+const GITHUB_RESOURCE_EXAMPLES: Record<string, string> = {
+  events: '{"repo": "owner/repo", "resource": "events", "eventTypes": ["PullRequestEvent"], "intervalMs": 60000}',
+  search: '{"repo": "owner/repo", "resource": "search", "queries": [{"name": "my-prs", "q": "is:pr is:open author:me"}], "intervalMs": 120000}',
+  pulls: '{"repo": "owner/repo", "resource": "pulls", "prs": [142], "include": ["comments", "reviews", "ci", "state"], "intervalMs": 60000}',
+};
+const GITHUB_RESOURCE_LABELS: Record<string, string> = {
+  events: "Resource: events (repo activity feed)",
+  search: "Resource: search (saved queries)",
+  pulls: "Resource: pulls (track specific PRs)",
 };
 
 // ── Toast system ──
@@ -220,6 +231,7 @@ function ConfirmButton({ label, confirmLabel = "confirm", onConfirm, disabled }:
 // ── Sources tab ──
 function TopicSources({ topic, sources, refresh }: { topic: Topic; sources: Source[]; refresh: () => void }) {
   const [kind, setKind] = useState("polled-url");
+  const [ghResource, setGhResource] = useState("events");
   const [options, setOptions] = useState(KIND_EXAMPLES["polled-url"]);
   const [running, setRunning] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
@@ -236,9 +248,16 @@ function TopicSources({ topic, sources, refresh }: { topic: Topic; sources: Sour
       <details className="mb-5" open={sources.length === 0}>
         <summary className="cursor-pointer text-sm text-zinc-400 hover:text-zinc-300 underline underline-offset-2 decoration-zinc-700 transition-colors">Add source</summary>
         <div className="mt-3 p-4 border border-zinc-800 rounded-lg bg-zinc-900/50 space-y-3">
-          <select className={inputCls} value={kind} onChange={(e) => { setKind(e.target.value); setOptions(KIND_EXAMPLES[e.target.value] ?? "{}"); }}>
+          <select className={inputCls} value={kind} onChange={(e) => { setKind(e.target.value); if (e.target.value === "github") { setGhResource("events"); setOptions(GITHUB_RESOURCE_EXAMPLES.events); } else setOptions(KIND_EXAMPLES[e.target.value] ?? "{}"); }}>
             <option value="polled-url">Polled URL</option><option value="github">GitHub</option><option value="jira">Jira</option><option value="google">Google Workspace</option>
           </select>
+          {kind === "github" && (
+            <select className={inputCls} value={ghResource} aria-label="GitHub resource" onChange={(e) => { setGhResource(e.target.value); setOptions(GITHUB_RESOURCE_EXAMPLES[e.target.value]); }}>
+              <option value="events">{GITHUB_RESOURCE_LABELS.events}</option>
+              <option value="search">{GITHUB_RESOURCE_LABELS.search}</option>
+              <option value="pulls">{GITHUB_RESOURCE_LABELS.pulls}</option>
+            </select>
+          )}
           <textarea className={`${inputCls} h-24 font-mono text-sm`} value={options} onChange={(e) => setOptions(e.target.value)} />
           <button className={btnCls} disabled={creating} onClick={handleCreate}>{creating ? "Creating..." : "Create source"}</button>
         </div>

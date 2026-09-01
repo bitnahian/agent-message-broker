@@ -1,37 +1,38 @@
 name: Release
 
-# Publishes agent-message-broker to npm when a v* tag is pushed, then attaches
-# the packed tarball to the matching GitHub release (created if missing).
+# Publishes agent-message-broker to npm when a v* tag is pushed, using OIDC
+# trusted publishing (no stored npm token). The package's Trusted Publisher
+# config on npmjs.com must name this workflow file (release.yml) and the
+# environment (release) exactly.
 #
-# One-time setup: repo secret NPM_TOKEN = a granular npm automation token with
-# read/write on the agent-message-broker package.
+# Provenance attestations are generated automatically for public repos.
 
 on:
   push:
     tags: ["v*"]
 
 permissions:
+  id-token: write # OIDC: npm trusted publishing
   contents: write # release upload
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # must match the environment name in the package's Trusted Publisher config
+    environment: release
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          node-version: 24 # ships npm >= 11.5.1, required for OIDC publishing
           registry-url: https://registry.npmjs.org/
       - run: npm ci
       - run: npm run build
       - run: npm test
 
-      - name: Publish to npm
+      - name: Publish to npm (OIDC trusted publishing — no token)
         working-directory: packages/agent-message-broker
         run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Attach tarball to GitHub release
         run: |

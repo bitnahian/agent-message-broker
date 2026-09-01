@@ -37,6 +37,10 @@ export function cleanupAmHome(base: string): void {
 
 export interface SeedGithub {
   repo: string; // "owner/repo"
+  /** the seeded PR's number (for resource=pulls tracking) */
+  prNumber: number;
+  /** authenticated user (repo owner login, for author-scoped search queries) */
+  login: string;
   cleanup: () => Promise<void>;
 }
 
@@ -69,10 +73,12 @@ export async function seedGithubRepo(token: string): Promise<SeedGithub> {
     owner: me, repo: name, message: `seed commit ${stamp}`, tree: tree.data.sha, parents: [mainSha],
   });
   await api.rest.git.updateRef({ owner: me, repo: name, ref: "heads/feature/seed", sha: commit.data.sha });
-  await api.rest.pulls.create({ owner: me, repo: name, title: `seed PR ${stamp}`, head: "feature/seed", base: "main", body: "made by amb e2e seed" });
+  const pull = await api.rest.pulls.create({ owner: me, repo: name, title: `seed PR ${stamp}`, head: "feature/seed", base: "main", body: "made by amb e2e seed" });
 
   return {
     repo: `${me}/${name}`,
+    prNumber: pull.data.number,
+    login: me,
     cleanup: async () => {
       try { await api.rest.repos.delete({ owner: me, repo: name }); } catch { /* already gone */ }
     },

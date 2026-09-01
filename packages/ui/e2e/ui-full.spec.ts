@@ -193,4 +193,37 @@ test.describe("UI full-flow coverage", () => {
     expect(subs[0].target.agent).toBe("codex");
     expect(subs[0].target.sessionId.length).toBeGreaterThan(0);
   });
+
+  test("github source form exposes resource dropdown with per-resource examples (ADR-0008)", async ({ page }) => {
+    const t = (await api("POST", "/topics", { name: "gh-res" })) as { id: string };
+    await page.goto("/");
+    await page.getByText("gh-res", { exact: true }).click();
+    await page.getByText("Sources", { exact: true }).first().click();
+
+    const kindSelect = page.locator("select").first();
+    if (!(await kindSelect.isVisible().catch(() => false))) await page.getByText("Add source").click();
+    await kindSelect.selectOption("github");
+
+    const resSelect = page.getByLabel("GitHub resource");
+    await expect(resSelect).toBeVisible();
+    await expect(page.locator("textarea").first()).toHaveValue(/"resource": "events"/);
+
+    await resSelect.selectOption("search");
+    await expect(page.locator("textarea").first()).toHaveValue(/"resource": "search"/);
+    await expect(page.locator("textarea").first()).toHaveValue(/"queries"/);
+
+    await resSelect.selectOption("pulls");
+    await expect(page.locator("textarea").first()).toHaveValue(/"resource": "pulls"/);
+    await expect(page.locator("textarea").first()).toHaveValue(/"prs"/);
+
+    await page.getByRole("button", { name: "Create source" }).click();
+    await expect
+      .poll(
+        async () =>
+          (await apiGet<any[]>("/sources")).some((s) => s.kind === "github" && (s.options as Record<string, unknown>).resource === "pulls"),
+        { timeout: 5000 },
+      )
+      .toBe(true);
+    expect(t.id).toBe(t.id);
+  });
 });

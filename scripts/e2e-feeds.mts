@@ -90,6 +90,50 @@ try {
   assert(githubKinds.some((k: string) => k.includes("PullRequest")), `expected github PullRequest event, got ${githubKinds.join(",")}`);
   console.log("✓ github feed emitted:", [...new Set(githubKinds)].join(", "));
 
+  // ---- github resource=search: seeded PR discovered by author query (ADR-0008) ----
+  const searchSource = await postJson("/sources", {
+    topicId: topic.id, kind: "github",
+    options: { repo: gh.repo, resource: "search", queries: [{ name: "seed-pr", q: `is:pr is:open author:${gh.login}` }], intervalMs: 4000 },
+  });
+  await postJson(`/sources/${searchSource.id}/start`, {});
+  // search index lags ~30s+, so allow a longer window
+  const searchEvents = await waitFor(
+    async () => getJson(`/events?topicId=${topic.id}`),
+    (evs) => evs.some((e: any) => e.kind === "github:search-match" && e.payload?.query === "seed-pr" && e.payload?.number === gh.prNumber),
+    "github:search-match for the seeded PR",
+    90,
+  );
+  const searchMatch = searchEvents.find((e: any) => e.kind === "github:search-match" && e.payload?.query === "seed-pr");
+  assert(searchMatch, "expected a github:search-match event");
+  assert((searchMatch.payload as { isPr: boolean }).isPr === true, "expected the search match to be a PR");
+  console.log("✓ github search emitted: match for PR", (searchMatch.payload as { number: number }).number);
+
+  // ---- github resource=pulls: track the seeded PR (comments + state) ----
+  // (CI skipped: throwaway private repos don't run Actions deterministically)
+  const pullsSource = await postJson("/sources", {
+    topicId: topic.id, kind: "github",
+    options: { repo: gh.repo, resource: "pulls", prs: [gh.prNumber], include: ["comments", "state"], intervalMs: 4000 },
+  });
+  await postJson(`/sources/${pullsSource.id}/start`, {});
+  await waitFor(
+    async () => getJson(`/events?topicId=${topic.id}`),
+    (evs) => evs.some((e: any) => e.kind === "github:pr-state" && e.payload?.pr === gh.prNumber),
+    "github:pr-state for the seeded PR",
+  );
+  console.log("✓ github pulls emitted: pr-state for PR", gh.prNumber);
+
+  // a real comment posted after the baseline poll must surface as github:pr-comment
+  const { Octokit } = await import("octokit");
+  const ghi = new Octokit({ auth: e2eSecret("E2E_GITHUB_TOKEN") });
+  const [ghOwner, ghRepo] = gh.repo.split("/", 2);
+  await ghi.rest.issues.createComment({ owner: ghOwner, repo: ghRepo, issue_number: gh.prNumber, body: `amb e2e comment ${Date.now()}` });
+  await waitFor(
+    async () => getJson(`/events?topicId=${topic.id}`),
+    (evs) => evs.some((e: any) => e.kind === "github:pr-comment" && e.payload?.pr === gh.prNumber),
+    "github:pr-comment after posting a comment",
+  );
+  console.log("✓ github pulls emitted: pr-comment for PR", gh.prNumber);
+
   // ---- jira feed asserts ----
   const jiraEvents = await waitFor(
     async () => getJson(`/events?topicId=${topic.id}`),
@@ -105,9 +149,13 @@ try {
   const sources = await getJson("/sources");
   const ghStatus = sources.find((s: any) => s.id === ghSource.id)?.status;
   const jiraStatus = sources.find((s: any) => s.id === jiraSource.id)?.status;
+  const searchStatus = sources.find((s: any) => s.id === searchSource.id)?.status;
+  const pullsStatus = sources.find((s: any) => s.id === pullsSource.id)?.status;
   assert(ghStatus === "running", `expected github source status running, got ${ghStatus}`);
   assert(jiraStatus === "running", `expected jira source status running, got ${jiraStatus}`);
-  console.log("✓ /sources status: github=", ghStatus, "jira=", jiraStatus);
+  assert(searchStatus === "running", `expected github search source status running, got ${searchStatus}`);
+  assert(pullsStatus === "running", `expected github pulls source status running, got ${pullsStatus}`);
+  console.log("✓ /sources status: github=", ghStatus, "jira=", jiraStatus, "search=", searchStatus, "pulls=", pullsStatus);
 
   // ---- delivery attempt recorded (subscription mechanism) ----
   const allEvents = await getJson("/events?topicId=" + topic.id);

@@ -57,6 +57,7 @@ export interface OctokitLike {
     pulls?: {
       get: (p: { owner: string; repo: string; pull_number: number }) => Promise<{ data: import("./github-pulls.js").PrDetail }>;
       listReviews: (p: { owner: string; repo: string; pull_number: number; per_page?: number }) => Promise<{ data: import("./github-pulls.js").PrReview[] }>;
+      listReviewComments: (p: { owner: string; repo: string; pull_number: number; per_page?: number }) => Promise<{ data: import("./github-pulls.js").ReviewComment[] }>;
     };
     issues?: {
       listComments: (p: { owner: string; repo: string; issue_number: number; per_page?: number }) => Promise<{ data: import("./github-pulls.js").IssueComment[] }>;

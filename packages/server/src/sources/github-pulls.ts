@@ -1,10 +1,10 @@
 import type { PollResult } from "./poller.js";
 import type { GitHubSourceOptions, OctokitLike } from "./github.js";
 
-/** Which per-PR streams to poll (ADR-0008); default: all four. */
-export type PullsInclude = "comments" | "reviews" | "ci" | "state";
+/** Which per-PR streams to poll (ADR-0008); default: all five. */
+export type PullsInclude = "comments" | "reviews" | "inline-comments" | "ci" | "state";
 
-const DEFAULT_INCLUDE: PullsInclude[] = ["comments", "reviews", "ci", "state"];
+const DEFAULT_INCLUDE: PullsInclude[] = ["comments", "reviews", "inline-comments", "ci", "state"];
 /** Workflow-run conclusions worth emitting; queued/in_progress are noise. */
 const TERMINAL_CONCLUSIONS = new Set(["success", "failure", "cancelled", "startup_failure"]);
 
@@ -33,6 +33,20 @@ export interface PrReview {
   state?: string;
   html_url?: string;
   user?: { login?: string } | null;
+}
+
+/** Inline diff-line review comment (pulls/{n}/comments). */
+export interface ReviewComment {
+  id: number;
+  body?: string;
+  path?: string;
+  line?: number | null;
+  original_line?: number | null;
+  diff_hunk?: string;
+  html_url?: string;
+  created_at?: string;
+  user?: { login?: string } | null;
+  pull_request_review_id?: number | null;
 }
 
 export interface WorkflowRun {
@@ -101,6 +115,27 @@ export async function pollPulls(opts: GitHubSourceOptions, api: OctokitLike): Pr
             kind: "github:pr-review",
             key: `pulls:${prNumber}:review:${r.id}`,
             payload: { pr: prNumber, author: r.user?.login, state: r.state, body: r.body?.slice(0, 500), url: r.html_url },
+          });
+        }
+      }
+
+      if (include.has("inline-comments")) {
+        const { data } = await api.rest.pulls.listReviewComments({ owner, repo: name, pull_number: prNumber, per_page: 50 });
+        for (const c of data) {
+          results.push({
+            kind: "github:pr-inline-comment",
+            key: `pulls:${prNumber}:inline:${c.id}`,
+            payload: {
+              pr: prNumber,
+              author: c.user?.login,
+              body: c.body?.slice(0, 500),
+              path: c.path,
+              line: c.line ?? c.original_line ?? undefined,
+              diffHunk: c.diff_hunk?.slice(0, 300),
+              url: c.html_url,
+              createdAt: c.created_at,
+              reviewId: c.pull_request_review_id ?? undefined,
+            },
           });
         }
       }

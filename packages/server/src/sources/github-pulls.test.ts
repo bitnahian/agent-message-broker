@@ -10,6 +10,7 @@ interface Fixture {
   pr: PrDetail;
   comments: { id: number; body?: string; user?: { login?: string }; html_url?: string; created_at?: string }[];
   reviews: { id: number; state?: string; body?: string; user?: { login?: string }; html_url?: string }[];
+  inline: { id: number; body?: string; path?: string; line?: number | null; diff_hunk?: string; user?: { login?: string }; html_url?: string; created_at?: string; pull_request_review_id?: number }[];
   runs: { id: number; name?: string; conclusion?: string | null; html_url?: string }[];
   fail?: boolean;
 }
@@ -28,6 +29,10 @@ function fakeOctokit(fix: Record<number, Fixture>, opts: { calls?: string[] } = 
         listReviews: async (p) => {
           opts.calls?.push(`reviews:${p.pull_number}`);
           return { data: fix[p.pull_number]?.reviews ?? [] };
+        },
+        listReviewComments: async (p) => {
+          opts.calls?.push(`inline:${p.pull_number}`);
+          return { data: fix[p.pull_number]?.inline ?? [] };
         },
       },
       issues: {
@@ -75,6 +80,7 @@ describe("GitHubSource resource=pulls", () => {
       142: {
         pr: OPEN_PR,
         comments: [{ id: 900, body: "looks good", user: { login: "ana" }, created_at: "2026-01-01T00:00:00Z" }],
+        inline: [],
         reviews: [{ id: 901, state: "APPROVED", user: { login: "ana" } }],
         runs: [
           { id: 700, name: "ci", conclusion: "success" },
@@ -110,7 +116,7 @@ describe("GitHubSource resource=pulls", () => {
   it("include gates which streams poll", async () => {
     const calls: string[] = [];
     const fix: Record<number, Fixture> = {
-      142: { pr: OPEN_PR, comments: [{ id: 900 }], reviews: [{ id: 901 }], runs: [{ id: 700, conclusion: "failure" }] },
+      142: { pr: OPEN_PR, comments: [{ id: 900 }], reviews: [{ id: 901 }], inline: [], runs: [{ id: 700, conclusion: "failure" }] },
     };
     const { store, src } = setup({ ...base, include: ["comments"] }, fix, fakeOctokit(fix, { calls }));
     expect(await src.tick()).toBe(1);
@@ -122,14 +128,14 @@ describe("GitHubSource resource=pulls", () => {
 
   it("CI uses the PR head SHA as a server-side filter", async () => {
     const calls: string[] = [];
-    const fix: Record<number, Fixture> = { 142: { pr: OPEN_PR, comments: [], reviews: [], runs: [] } };
+    const fix: Record<number, Fixture> = { 142: { pr: OPEN_PR, comments: [], reviews: [], inline: [], runs: [] } };
     const { src } = setup(base, fix, fakeOctokit(fix, { calls }));
     await src.tick();
     expect(calls).toContain("actions:abc123");
   });
 
   it("a missing PR degrades to a deduped github:error without killing the rest", async () => {
-    const fix: Record<number, Fixture> = { 142: { pr: OPEN_PR, comments: [{ id: 900 }], reviews: [], runs: [] } };
+    const fix: Record<number, Fixture> = { 142: { pr: OPEN_PR, comments: [{ id: 900 }], reviews: [], inline: [], runs: [] } };
     const { store, src } = setup({ ...base, prs: [142, 999] }, fix);
     await src.tick();
     const kinds = store.listEvents().map((e) => e.kind).sort();
@@ -143,5 +149,47 @@ describe("GitHubSource resource=pulls", () => {
     const ev = store.listEvents()[0];
     expect(ev?.kind).toBe("github:error");
     expect((ev?.payload as { error: string }).error).toContain("prs");
+  });
+});
+
+describe("GitHubSource resource=pulls inline-comments", () => {
+  const base = { repo: "o/r", resource: "pulls", prs: [142] };
+  const OPEN_PR_LOCAL = {
+    number: 142, state: "open", merged: false, mergeable: true,
+    title: "t", user: { login: "bitnahian" }, head: { sha: "abc123" },
+  };
+
+  function inlineFix(inline: { id: number; body?: string; path?: string }[]) {
+    return { 142: { pr: OPEN_PR_LOCAL as PrDetail, comments: [], reviews: [], inline, runs: [] } };
+  }
+
+  it("emits github:pr-inline-comment with path/line/diffHunk, deduped by id", async () => {
+    const fix = inlineFix([
+      { id: 800, body: "this line is wrong", path: "src/index.ts", line: 42, diff_hunk: "@@ -40,7 +40,7 @@ fn()", user: { login: "ana" }, html_url: "u", created_at: "2026-01-01T00:00:00Z", pull_request_review_id: 901 },
+    ]);
+    const { store, src } = setup(base, fix, fakeOctokit(fix));
+    expect(await src.tick()).toBe(2); // state + inline comment
+    expect(await src.tick()).toBe(0);
+    const ev = store.listEvents().find((e) => e.kind === "github:pr-inline-comment");
+    const p = ev!.payload as { pr: number; author: string; path: string; line: number; diffHunk: string; reviewId: number };
+    expect(p).toMatchObject({ pr: 142, author: "ana", path: "src/index.ts", line: 42, reviewId: 901 });
+    expect(p.diffHunk).toContain("@@");
+  });
+
+  it("is gated by include", async () => {
+    const calls: string[] = [];
+    const fix = inlineFix([{ id: 800, body: "x", path: "a.ts" }]);
+    const { store, src } = setup({ ...base, include: ["comments"] }, fix, fakeOctokit(fix, { calls }));
+    await src.tick();
+    expect(calls.some((c) => c.startsWith("inline:"))).toBe(false);
+    expect(store.listEvents().some((e) => e.kind === "github:pr-inline-comment")).toBe(false);
+  });
+
+  it("is part of the default include set", async () => {
+    const calls: string[] = [];
+    const fix = inlineFix([{ id: 800, body: "x", path: "a.ts" }]);
+    const { src } = setup(base, fix, fakeOctokit(fix, { calls }));
+    await src.tick();
+    expect(calls.some((c) => c.startsWith("inline:"))).toBe(true);
   });
 });

@@ -131,12 +131,12 @@ amb sources create --topic prs --kind github --options '{
   "repo": "owner/repo",
   "resource": "pulls",
   "prs": [142],
-  "include": ["comments", "reviews", "inline-comments", "ci", "state"],
+  "include": ["comments", "reviews", "inline-comments", "ci", "state", "head"],
   "intervalMs": 60000
 }'
 ```
 
-Emits `github:pr-comment`, `github:pr-review`, `github:pr-inline-comment` (diff-line comments, with `path`/`line`/`diffHunk` in the payload), `github:pr-ci` (terminal conclusions only: success, failure, cancelled), and `github:pr-state` (open/merged/closed/conflicted). CI is fetched with `head_sha` server-side filtering, which matters because the events feed can't see CI at all.
+Emits `github:pr-comment`, `github:pr-review`, `github:pr-inline-comment` (diff-line comments, with `path`/`line`/`diffHunk` in the payload), `github:pr-ci` (terminal conclusions only: success, failure, cancelled), `github:pr-head` (the PR's head SHA changed, i.e. new commits or a force-push; carries `previousHeadSha` and the new commit headlines so the subscriber can tell a real change from a merge from main), and `github:pr-state` (open/merged/closed/conflicted). Like `state`, the head stream emits once as a baseline on the first poll. CI is fetched with `head_sha` server-side filtering, which matters because the events feed can't see CI at all.
 
 The original generic feed remains available as `"resource": "events"` (the default), emitting `github:<Type>` with the `eventTypes` allowlist.
 

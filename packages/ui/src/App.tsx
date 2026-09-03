@@ -30,7 +30,7 @@ const KIND_EXAMPLES: Record<string, string> = {
 const GITHUB_RESOURCE_EXAMPLES: Record<string, string> = {
   events: '{"repo": "owner/repo", "resource": "events", "eventTypes": ["PullRequestEvent"], "intervalMs": 60000}',
   search: '{"repo": "owner/repo", "resource": "search", "queries": [{"name": "my-prs", "q": "is:pr is:open author:me"}], "intervalMs": 120000}',
-  pulls: '{"repo": "owner/repo", "resource": "pulls", "prs": [142], "include": ["comments", "reviews", "inline-comments", "ci", "state"], "intervalMs": 60000}',
+  pulls: '{"repo": "owner/repo", "resource": "pulls", "prs": [142], "include": ["comments", "reviews", "inline-comments", "ci", "state", "head"], "intervalMs": 60000}',
 };
 const GITHUB_RESOURCE_LABELS: Record<string, string> = {
   events: "Resource: events (repo activity feed)",

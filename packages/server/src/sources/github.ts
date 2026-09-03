@@ -58,6 +58,7 @@ export interface OctokitLike {
       get: (p: { owner: string; repo: string; pull_number: number }) => Promise<{ data: import("./github-pulls.js").PrDetail }>;
       listReviews: (p: { owner: string; repo: string; pull_number: number; per_page?: number }) => Promise<{ data: import("./github-pulls.js").PrReview[] }>;
       listReviewComments: (p: { owner: string; repo: string; pull_number: number; per_page?: number }) => Promise<{ data: import("./github-pulls.js").ReviewComment[] }>;
+      listCommits: (p: { owner: string; repo: string; pull_number: number; per_page?: number }) => Promise<{ data: { sha: string; commit?: { message?: string }; html_url?: string }[] }>;
     };
     issues?: {
       listComments: (p: { owner: string; repo: string; issue_number: number; per_page?: number }) => Promise<{ data: import("./github-pulls.js").IssueComment[] }>;
@@ -142,7 +143,7 @@ export class GitHubSource extends Poller {
     const resource = this.opts.resource ?? "events";
     try {
       if (resource === "search") return await pollSearch(this.opts, this.api);
-      if (resource === "pulls") return await pollPulls(this.opts, this.api);
+      if (resource === "pulls") return await pollPulls(this.opts, this.api, this.ctx);
     } catch (err) {
       // config-shape errors (missing queries/prs/repo) surface as loud, deduped errors
       const msg = err instanceof Error ? err.message : String(err);

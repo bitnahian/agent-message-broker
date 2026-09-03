@@ -1,10 +1,10 @@
 import type { PollResult } from "./poller.js";
 import type { GitHubSourceOptions, OctokitLike } from "./github.js";
 
-/** Which per-PR streams to poll (ADR-0008); default: all five. */
-export type PullsInclude = "comments" | "reviews" | "inline-comments" | "ci" | "state";
+/** Which per-PR streams to poll (ADR-0008); default: all six. */
+export type PullsInclude = "comments" | "reviews" | "inline-comments" | "ci" | "state" | "head";
 
-const DEFAULT_INCLUDE: PullsInclude[] = ["comments", "reviews", "inline-comments", "ci", "state"];
+const DEFAULT_INCLUDE: PullsInclude[] = ["comments", "reviews", "inline-comments", "ci", "state", "head"];
 /** Workflow-run conclusions worth emitting; queued/in_progress are noise. */
 const TERMINAL_CONCLUSIONS = new Set(["success", "failure", "cancelled", "startup_failure"]);
 
@@ -49,6 +49,12 @@ export interface ReviewComment {
   pull_request_review_id?: number | null;
 }
 
+export interface PrCommit {
+  sha: string;
+  message?: string;
+  html_url?: string;
+}
+
 export interface WorkflowRun {
   id: number;
   name?: string;
@@ -64,7 +70,17 @@ export interface WorkflowRun {
  * are exact-entity REST with server-side filters; no feed scraping. Throws on
  * config-shape errors; per-PR API errors degrade to deduped github:error.
  */
-export async function pollPulls(opts: GitHubSourceOptions, api: OctokitLike): Promise<PollResult[]> {
+/** Minimal state store so the head stream can remember the last seen SHA. */
+export interface PullsStateStore {
+  getState<T>(key: string): T | undefined;
+  setState(key: string, value: unknown): void;
+}
+
+export async function pollPulls(
+  opts: GitHubSourceOptions,
+  api: OctokitLike,
+  state?: PullsStateStore,
+): Promise<PollResult[]> {
   const repo = opts.repo;
   if (!repo || !repo.includes("/")) {
     throw new Error("github pulls feed requires options.repo (owner/repo)");
@@ -82,9 +98,9 @@ export async function pollPulls(opts: GitHubSourceOptions, api: OctokitLike): Pr
 
   for (const prNumber of prs) {
     try {
-      // PR detail: needed for state and for CI (head SHA); cheap single fetch
+      // PR detail: needed for state, CI (head SHA), and head tracking; one fetch
       let headSha: string | undefined;
-      if (include.has("state") || include.has("ci")) {
+      if (include.has("state") || include.has("ci") || include.has("head")) {
         const { data: pr } = await api.rest.pulls.get({ owner, repo: name, pull_number: prNumber });
         headSha = pr.head?.sha;
         if (include.has("state")) {
@@ -94,6 +110,38 @@ export async function pollPulls(opts: GitHubSourceOptions, api: OctokitLike): Pr
             key: `pulls:${prNumber}:state:${state}`,
             payload: { pr: prNumber, state, title: pr.title, author: pr.user?.login, url: pr.html_url },
           });
+        }
+        if (include.has("head")) {
+          // head stream: emit when the PR's head SHA changes (a push, or a
+          // force-push). Dedupe key is the SHA, so one event lands per push
+          // regardless of how many commits it carried.
+          const headCacheKey = `head:${prNumber}`;
+          const previous = state?.getState<string | undefined>(headCacheKey);
+          const headPayload: Record<string, unknown> = {
+            pr: prNumber,
+            headSha,
+            previousHeadSha: previous || undefined,
+            ref: pr.head?.ref,
+            title: pr.title,
+            author: pr.user?.login,
+            url: pr.html_url,
+          };
+          // commit headlines since the previous head; a previous SHA missing
+          // from the PR's commit list means history was rewritten (force-push)
+          if (previous && previous !== headSha && api.rest.pulls.listCommits) {
+            try {
+              const { data } = await api.rest.pulls.listCommits({ owner, repo: name, pull_number: prNumber, per_page: 10 });
+              const idx = data.findIndex((c) => c.sha === previous);
+              headPayload.commits = (idx >= 0 ? data.slice(idx + 1) : []).map((c) => ({
+                sha: c.sha,
+                message: c.commit?.message?.split("\n")[0],
+                url: c.html_url,
+              }));
+              headPayload.forcePushed = idx < 0 || undefined;
+            } catch { /* commit detail is best-effort; the head event stands */ }
+          }
+          results.push({ kind: "github:pr-head", key: `pulls:${prNumber}:head:${headSha}`, payload: headPayload });
+          state?.setState(headCacheKey, headSha);
         }
       }
 
